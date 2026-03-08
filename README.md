@@ -20,7 +20,7 @@ copies `overlay/` into the upstream checkout before applying the patch series, s
 - Maintained reviewable patch series (applied in filename order):
   - `0001-hibyr1-add-bluetooth-UI-menu-integration.patch`
   - `0002-hibyr1-add-bluealsa-pcm-backend-and-routing-hooks.patch`
-  - `0003-hibyr1-add-hosted-runtime-glue.patch`
+  - `0003-hibyr1-fix-start-directory-and-usb-attach.patch`
   - `0004-hibyr1-use-usb-mode-setting-for-adb.patch`
 
 See `baseline/BASELINE.md` for provenance.
