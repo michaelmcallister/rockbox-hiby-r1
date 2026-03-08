@@ -1,0 +1,129 @@
+From 62bc5b05db826b03ce67a76b2861cdf73d456ab5 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <git@sknk.ws>
+Date: Sun, 8 Mar 2026 11:38:28 +0000
+Subject: [PATCH 4/5] hosted: add devinput trace hooks for on-device debugging
+
+---
+ firmware/target/hosted/button-devinput.c | 50 ++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/firmware/target/hosted/button-devinput.c b/firmware/target/hosted/button-devinput.c
+index a9129f3ea6..55d4557e15 100644
+--- a/firmware/target/hosted/button-devinput.c
++++ b/firmware/target/hosted/button-devinput.c
+@@ -27,6 +27,9 @@
+ #include <fcntl.h>
+ #include <string.h>
+ #include <stdlib.h>
++#include <stdio.h>
++#include <stdarg.h>
++#include <time.h>
+ 
+ #include "kernel.h"
+ #include "sysfs.h"
+@@ -54,6 +57,31 @@
+ static int num_devices = 0;
+ static struct pollfd poll_fds[NR_POLL_DESC];
+ 
++static void input_trace(const char *fmt, ...)
++{
++    FILE *fp;
++    va_list ap;
++    time_t now;
++    struct tm tm_now;
++
++    fp = fopen("/usr/data/mnt/sd_0/.rockbox/input_trace.log", "a");
++    if (!fp)
++        return;
++
++    now = time(NULL);
++    localtime_r(&now, &tm_now);
++    fprintf(fp, "[%04d-%02d-%02d %02d:%02d:%02d] ",
++            tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
++            tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
++
++    va_start(ap, fmt);
++    vfprintf(fp, fmt, ap);
++    va_end(ap);
++
++    fputc('\n', fp);
++    fclose(fp);
++}
++
+ void button_init_device(void)
+ {
+     const char * const input_devs[NR_POLL_DESC] = {
+@@ -72,9 +100,11 @@ void button_init_device(void)
+             poll_fds[num_devices].fd = fd;
+             poll_fds[num_devices].events = POLLIN;
+             poll_fds[num_devices].revents = 0;
++            input_trace("open input dev %s fd=%d slot=%d", input_devs[i], fd, num_devices);
+             num_devices++;
+         }
+     }
++    input_trace("button_init_device num_devices=%d", num_devices);
+ }
+ 
+ void button_close_device(void)
+@@ -132,6 +162,7 @@ static void handle_touchscreen_event(__u16 code, __s32 value)
+         case ABS_MT_POSITION_X:
+         {
+             _last_x = value;
++            input_trace("touch ABS_X code=%u value=%d", code, value);
+             break;
+         }
+ 
+@@ -139,6 +170,7 @@ static void handle_touchscreen_event(__u16 code, __s32 value)
+         case ABS_MT_POSITION_Y:
+         {
+             _last_y = value;
++            input_trace("touch ABS_Y code=%u value=%d", code, value);
+             break;
+         }
+ 
+@@ -147,10 +179,12 @@ static void handle_touchscreen_event(__u16 code, __s32 value)
+             if(value == EVENT_VALUE_TOUCHSCREEN_RELEASE)
+             {
+                 _last_touch_state = TOUCHSCREEN_STATE_UP;
++                input_trace("touch TRACKING release");
+             }
+             else
+             {
+                 _last_touch_state = TOUCHSCREEN_STATE_DOWN;
++                input_trace("touch TRACKING press id=%d", value);
+             }
+             break;
+         }
+@@ -196,6 +230,11 @@ int button_read_device(BDATA)
+                     case EV_KEY: {
+                         /* map linux event code to rockbox button bitmap */
+                         int bmap = button_map(event.code);
++                        if (event.code == BTN_TOUCH || bmap)
++                        {
++                            input_trace("EV_KEY code=%u value=%d bmap=0x%x",
++                                        event.code, event.value, bmap);
++                        }
+ 
+                         /* event.value == 0x10000 means press
+                          * event.value == 0 means release
+@@ -297,6 +336,17 @@ int button_read_device(BDATA)
+ 
+     if(_last_touch_state == TOUCHSCREEN_STATE_DOWN)
+     {
++        if (touch)
++        {
++            input_trace("touch active x=%d y=%d touch=0x%x button_bitmap=0x%x data=%d",
++                        _last_x, _last_y, touch, button_bitmap,
++#ifdef HAVE_BUTTON_DATA
++                        data ? *data : -1
++#else
++                        -1
++#endif
++            );
++        }
+         return button_bitmap | touch;
+     }
+ #endif
+-- 
+2.50.1 (Apple Git-155)
+
