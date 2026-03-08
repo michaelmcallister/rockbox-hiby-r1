@@ -38,6 +38,11 @@ sha256_cmd() {
   fi
 }
 
+toolchain_ready() {
+  [ -x "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-gcc" ] &&
+    [ -f "$TOOLCHAIN_PREFIX/mipsel-rockbox-linux-gnu/sysroot/usr/include/sys/types.h" ]
+}
+
 BUILD_JOBS="${BUILD_JOBS:-$(default_build_jobs)}"
 
 mkdir -p "$WORK_DIR" "$OUT_DIR"
@@ -76,7 +81,7 @@ done
 
 PATCHED_HEAD="$(git -C "$UPSTREAM_DIR" rev-parse --verify HEAD)"
 
-if [ ! -x "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-gcc" ]; then
+if ! toolchain_ready; then
   export RBDEV_PREFIX="$TOOLCHAIN_PREFIX"
   export RBDEV_DOWNLOAD
   export RBDEV_BUILD
