@@ -6,6 +6,7 @@ WORK_DIR="${WORK_DIR:-$ROOT_DIR/work}"
 UPSTREAM_DIR="${UPSTREAM_DIR:-$WORK_DIR/rockbox}"
 PATCH_DIR="${PATCH_DIR:-$ROOT_DIR/patches}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/out}"
+CCACHE_DIR="${CCACHE_DIR:-$ROOT_DIR/.ccache}"
 
 ROCKBOX_REMOTE="${ROCKBOX_REMOTE:-https://github.com/Rockbox/rockbox.git}"
 ROCKBOX_BASE_COMMIT="${ROCKBOX_BASE_COMMIT:-dd21a1d1d9ae4f314eb16d4813414ee72e2aa0de}"
@@ -38,9 +39,59 @@ sha256_cmd() {
   fi
 }
 
+toolchain_smoke_test() {
+  local tmpdir cfile ofile
+
+  tmpdir="$(mktemp -d)"
+  cfile="$tmpdir/toolchain-smoke.c"
+  ofile="$tmpdir/toolchain-smoke.o"
+  printf 'int toolchain_smoke;\n' > "$cfile"
+
+  if "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-gcc" -c "$cfile" -o "$ofile" >/dev/null 2>&1; then
+    rm -rf "$tmpdir"
+    return 0
+  fi
+
+  rm -rf "$tmpdir"
+  return 1
+}
+
 toolchain_ready() {
   [ -x "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-gcc" ] &&
-    [ -f "$TOOLCHAIN_PREFIX/mipsel-rockbox-linux-gnu/sysroot/usr/include/sys/types.h" ]
+    [ -f "$TOOLCHAIN_PREFIX/mipsel-rockbox-linux-gnu/sysroot/usr/include/sys/types.h" ] &&
+    toolchain_smoke_test
+}
+
+setup_ccache() {
+  local wrapper_dir
+
+  if ! command -v ccache >/dev/null 2>&1; then
+    return
+  fi
+
+  wrapper_dir="$WORK_DIR/ccache-wrappers"
+  mkdir -p "$wrapper_dir" "$CCACHE_DIR"
+
+  cat > "$wrapper_dir/mipsel-rockbox-linux-gnu-gcc" <<EOF
+#!/usr/bin/env bash
+exec ccache "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-gcc" "\$@"
+EOF
+  chmod +x "$wrapper_dir/mipsel-rockbox-linux-gnu-gcc"
+
+  cat > "$wrapper_dir/mipsel-rockbox-linux-gnu-g++" <<EOF
+#!/usr/bin/env bash
+exec ccache "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-g++" "\$@"
+EOF
+  chmod +x "$wrapper_dir/mipsel-rockbox-linux-gnu-g++"
+
+  export CCACHE_DIR
+  export CCACHE_BASEDIR="$ROOT_DIR"
+  export CCACHE_COMPILERCHECK=content
+  export CCACHE_NOHASHDIR=1
+  export PATH="$wrapper_dir:$TOOLCHAIN_PREFIX/bin:$PATH"
+
+  log "ccache enabled: $CCACHE_DIR"
+  ccache --zero-stats >/dev/null 2>&1 || true
 }
 
 BUILD_JOBS="${BUILD_JOBS:-$(default_build_jobs)}"
@@ -51,6 +102,9 @@ if [ ! -d "$UPSTREAM_DIR/.git" ]; then
   log "initializing upstream Rockbox repo"
   git init "$UPSTREAM_DIR"
 fi
+
+# Containerized/local repros may mount the workspace with a different owner.
+git config --global --add safe.directory "$UPSTREAM_DIR" >/dev/null 2>&1 || true
 
 git -C "$UPSTREAM_DIR" remote remove origin >/dev/null 2>&1 || true
 git -C "$UPSTREAM_DIR" remote add origin "$ROCKBOX_REMOTE"
@@ -82,6 +136,11 @@ done
 PATCHED_HEAD="$(git -C "$UPSTREAM_DIR" rev-parse --verify HEAD)"
 
 if ! toolchain_ready; then
+  if [ -d "$TOOLCHAIN_PREFIX" ]; then
+    log "existing toolchain is unusable; rebuilding"
+    rm -rf "$TOOLCHAIN_PREFIX"
+  fi
+  rm -rf "$RBDEV_BUILD"
   export RBDEV_PREFIX="$TOOLCHAIN_PREFIX"
   export RBDEV_DOWNLOAD
   export RBDEV_BUILD
@@ -91,7 +150,11 @@ if ! toolchain_ready; then
   "$UPSTREAM_DIR/tools/rockboxdev.sh" --target=y
 fi
 
-export PATH="$TOOLCHAIN_PREFIX/bin:$PATH"
+setup_ccache
+
+if ! command -v mipsel-rockbox-linux-gnu-gcc >/dev/null 2>&1; then
+  export PATH="$TOOLCHAIN_PREFIX/bin:$PATH"
+fi
 
 FW_BUILD_DIR="$WORK_DIR/build-hibyr1-rockbox"
 BL_BUILD_DIR="$WORK_DIR/build-hibyr1-bootloader"
@@ -140,3 +203,7 @@ META
 
 log "build complete; artifacts in $OUT_DIR"
 ls -l "$OUT_DIR"
+
+if command -v ccache >/dev/null 2>&1; then
+  ccache --show-stats || true
+fi
