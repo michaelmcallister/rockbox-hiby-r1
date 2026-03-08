@@ -11,17 +11,20 @@ Standalone source files that do not exist upstream live in `overlay/`. The build
 copies `overlay/` into the upstream checkout before applying the patch series, so
 `patches/` stays limited to edits against existing upstream files.
 
+## Current Build
+
+- Pinned upstream base commit: `9a6e3799e18ba1e365cb23f6a2a5044e49cecffc`
+- Reviewable patch series (applied in filename order):
+  - `0001-hibyr1-add-bluetooth-UI-menu-integration.patch`
+  - `0002-hibyr1-add-bluealsa-pcm-backend-and-routing-hooks.patch`
+  - `0003-hibyr1-use-usb-mode-setting-for-adb.patch`
+
 ## Baseline (currently running device build)
 
 - Running binary SHA-256: `ada98d8ac6f6ddef7845619e1e5189e829ba92fb1003031ffa0c609d1567ca17`
 - Embedded signature: `dd21a1d1d9M-260307`
 - Upstream base commit: `dd21a1d1d9ae4f314eb16d4813414ee72e2aa0de`
 - Reconstructed baseline source commit (single-commit reconstruction): `6af68b9dc7373a02d1c55d169780f35f01d4c011`
-- Maintained reviewable patch series (applied in filename order):
-  - `0001-hibyr1-add-bluetooth-UI-menu-integration.patch`
-  - `0002-hibyr1-add-bluealsa-pcm-backend-and-routing-hooks.patch`
-  - `0003-hibyr1-fix-start-directory-and-usb-attach.patch`
-  - `0004-hibyr1-use-usb-mode-setting-for-adb.patch`
 
 See `baseline/BASELINE.md` for provenance.
 

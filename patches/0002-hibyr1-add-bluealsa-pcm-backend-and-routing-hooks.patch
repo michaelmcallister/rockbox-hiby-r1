@@ -1,19 +1,18 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Codex <codex@example.invalid>
-Date: Sun, 8 Mar 2026 17:50:16 +0000
-Subject: [PATCH 2/4] hibyr1: add bluealsa pcm backend and routing hooks
+Date: Sun, 8 Mar 2026 18:07:14 +0000
+Subject: [PATCH 2/3] hibyr1: add bluealsa pcm backend and routing hooks
 
 
 diff --git a/firmware/SOURCES b/firmware/SOURCES
-index fbd92742bafe58b1efc0aa969f8bdf8a99765b24..e80615de97466031495f9829504a94d2cf1e189e 100644
+index 195b5e0caa3909a6c168e6e2d5ccea0f6defe540..437f8aaf04a2f45e17ec1b037f3b3e85a8a96114 100644
 --- a/firmware/SOURCES
 +++ b/firmware/SOURCES
-@@ -145,10 +145,16 @@ target/hosted/sonynwz/nwzlinux-codec.c
- #endif
+@@ -146,10 +146,14 @@ target/hosted/sonynwz/nwzlinux-codec.c
  #endif
  
+ #if !defined(BOOTLOADER)
 -#if ((defined(HIBY_LINUX) || defined(FIIO_M3K_LINUX) || defined(SAMSUNG_YPR0) || defined(SAMSUNG_YPR1) || defined(SONY_NWZ_LINUX)) && !defined(SIMULATOR))
-+#if !defined(BOOTLOADER)
 +#if ((defined(FIIO_M3K_LINUX) || defined(SAMSUNG_YPR0) || defined(SAMSUNG_YPR1) || defined(SONY_NWZ_LINUX)) && !defined(SIMULATOR))
  target/hosted/pcm-alsa.c
  target/hosted/alsa-controls.c
@@ -22,10 +21,9 @@ index fbd92742bafe58b1efc0aa969f8bdf8a99765b24..e80615de97466031495f9829504a94d2
 +target/hosted/hiby/pcm-alsa-hiby.c
 +target/hosted/alsa-controls.c
 +#endif
-+#endif
+ #endif
  
  #if ((defined(HIBY_LINUX) || defined(FIIO_M3K_LINUX)) && !defined(SIMULATOR))
- drivers/lcd-memframe.c
 diff --git a/firmware/target/hosted/hiby/hibylinux_codec.c b/firmware/target/hosted/hiby/hibylinux_codec.c
 index 656e07a6a1cb92c6c3a7473c8423e780ecd665b8..9b0a7b759cb543926bfc3dc91c16db743268f5db 100644
 --- a/firmware/target/hosted/hiby/hibylinux_codec.c
@@ -247,24 +245,10 @@ index 656e07a6a1cb92c6c3a7473c8423e780ecd665b8..9b0a7b759cb543926bfc3dc91c16db74
  }
 -
 diff --git a/firmware/target/hosted/pcm-alsa.h b/firmware/target/hosted/pcm-alsa.h
-index f35be600744869ffb0a35ca2a8f1817c88342b8a..e133463a4a8d1ef20e17b2c0fcb4913eaf189ed7 100644
+index 3fa6ffe9dbeb90c685290d448b085aab592582bb..e133463a4a8d1ef20e17b2c0fcb4913eaf189ed7 100644
 --- a/firmware/target/hosted/pcm-alsa.h
 +++ b/firmware/target/hosted/pcm-alsa.h
-@@ -21,10 +21,12 @@
- #define __PCM_ALSA_RB_H__
- 
- #include <config.h>
-+#include <limits.h>
- 
- #if defined(HAVE_ALSA_32BIT)
-+
- /* Set the PCM volume in dB: each sample with have this volume applied digitally
-- * before being sent to ALSA. Volume must satisfy -43 <= dB <= 0 */
-+ * before being sent to ALSA. Effective range -79 dB to 0 dB */
- void pcm_set_mixer_volume(int vol_db_l, int vol_db_r);
- #endif
- 
-@@ -34,6 +36,12 @@ void pcm_alsa_set_playback_device(const char *device);
+@@ -36,6 +36,12 @@ void pcm_alsa_set_playback_device(const char *device);
  void pcm_alsa_set_capture_device(const char *device);
  #endif
  
