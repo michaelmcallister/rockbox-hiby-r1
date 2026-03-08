@@ -29,3 +29,16 @@ See `baseline/BASELINE.md` for provenance.
 ```
 
 Artifacts are written to `out/`.
+
+## GitHub release build
+
+Push a version tag to create a GitHub Release with `rockbox.r1`, `bootloader.r1`,
+checksums, and build metadata attached.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow rebuilds from the pinned upstream base plus `patches/`,
+so the release assets are tied to the tagged commit in this repo.
