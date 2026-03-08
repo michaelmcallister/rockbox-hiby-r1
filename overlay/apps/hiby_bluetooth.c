@@ -88,6 +88,7 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks);
 static void bt_force_sbc_codec(const char *mac);
 static bool bt_bluealsa_pcm_ready(const char *mac);
 static bool bt_is_connected(const char *mac);
+static bool bt_read_status_info(const char *mac, struct bt_status_info *info);
 static bool bt_prepare_stack(void);
 static void bt_connect_device(const struct bt_device *device);
 
