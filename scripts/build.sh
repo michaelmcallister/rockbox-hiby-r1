@@ -17,9 +17,36 @@ RBDEV_DOWNLOAD="${RBDEV_DOWNLOAD:-$WORK_DIR/rbdev-download}"
 RBDEV_BUILD="${RBDEV_BUILD:-$WORK_DIR/rbdev-build}"
 GNU_MIRROR="${GNU_MIRROR:-https://ftp.gnu.org/gnu}"
 LINUX_MIRROR="${LINUX_MIRROR:-https://cdn.kernel.org/pub/linux}"
+R1_UPDATE_URL="${R1_UPDATE_URL:-}"
+R1_UPDATE_SHA256="${R1_UPDATE_SHA256:-}"
+R1_UPDATE_PATH="${R1_UPDATE_PATH:-}"
 
 log() {
   printf '[build] %s\n' "$*"
+}
+
+download_file() {
+  local url="$1"
+  local dest="$2"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -L --fail --retry 3 --retry-delay 2 -o "$dest" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$dest" "$url"
+  else
+    python3 - "$url" "$dest" <<'PY'
+import sys
+import urllib.request
+
+url, dest = sys.argv[1], sys.argv[2]
+with urllib.request.urlopen(url) as src, open(dest, 'wb') as dst:
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            break
+        dst.write(chunk)
+PY
+  fi
 }
 
 install_overlay() {
@@ -51,6 +78,63 @@ sha256_cmd() {
   else
     shasum -a 256 "$@"
   fi
+}
+
+sha256_file() {
+  sha256_cmd "$1" | awk '{print $1}'
+}
+
+package_r1_upt() {
+  local patcher package_dir base_upt base_sha256
+
+  if [ -z "$R1_UPDATE_URL" ] && [ -z "$R1_UPDATE_PATH" ]; then
+    log "skipping .upt packaging; no base update configured"
+    return 0
+  fi
+
+  patcher="$UPSTREAM_DIR/tools/r1_patcher/r1_patcher.sh"
+  package_dir="$WORK_DIR/r1-package"
+  base_upt="$package_dir/r1.upt"
+
+  if [ ! -f "$patcher" ]; then
+    echo "Missing r1 patcher at $patcher" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$OUT_DIR/bootloader.r1" ]; then
+    echo "Missing bootloader.r1 in $OUT_DIR" >&2
+    exit 1
+  fi
+
+  rm -rf "$package_dir"
+  mkdir -p "$package_dir"
+
+  if [ -n "$R1_UPDATE_PATH" ]; then
+    log "using local base update from $R1_UPDATE_PATH"
+    cp -f "$R1_UPDATE_PATH" "$base_upt"
+  else
+    log "downloading base update from configured URL"
+    download_file "$R1_UPDATE_URL" "$base_upt"
+  fi
+
+  if [ -n "$R1_UPDATE_SHA256" ]; then
+    base_sha256="$(sha256_file "$base_upt")"
+    if [ "$base_sha256" != "$R1_UPDATE_SHA256" ]; then
+      echo "Base update SHA256 mismatch: expected $R1_UPDATE_SHA256 got $base_sha256" >&2
+      exit 1
+    fi
+  fi
+
+  cp -f "$OUT_DIR/bootloader.r1" "$package_dir/bootloader.r1"
+  chmod +x "$patcher"
+
+  log "packaging flashable .upt"
+  (
+    cd "$package_dir"
+    bash "$patcher" r1.upt bootloader.r1
+  )
+
+  cp -f "$package_dir/r1_rb.upt" "$OUT_DIR/"
 }
 
 toolchain_smoke_test() {
@@ -204,6 +288,8 @@ else
   find "$BL_BUILD_DIR" -maxdepth 1 -type f -name 'bootloader*' -exec cp -f {} "$OUT_DIR/" \;
 fi
 
+package_r1_upt
+
 cat > "$OUT_DIR/build-metadata.txt" <<META
 rockbox_remote=$ROCKBOX_REMOTE
 rockbox_base_commit=$ROCKBOX_BASE_COMMIT
@@ -211,6 +297,9 @@ patched_head=$PATCHED_HEAD
 build_jobs=$BUILD_JOBS
 gnu_mirror=$GNU_MIRROR
 linux_mirror=$LINUX_MIRROR
+r1_update_url=$R1_UPDATE_URL
+r1_update_sha256=$R1_UPDATE_SHA256
+r1_update_path=$R1_UPDATE_PATH
 META
 
 (
