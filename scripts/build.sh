@@ -43,13 +43,16 @@ BUILD_JOBS="${BUILD_JOBS:-$(default_build_jobs)}"
 mkdir -p "$WORK_DIR" "$OUT_DIR"
 
 if [ ! -d "$UPSTREAM_DIR/.git" ]; then
-  log "cloning upstream Rockbox"
-  git clone "$ROCKBOX_REMOTE" "$UPSTREAM_DIR"
+  log "initializing upstream Rockbox repo"
+  git init "$UPSTREAM_DIR"
 fi
 
-log "checking out upstream base commit $ROCKBOX_BASE_COMMIT"
-git -C "$UPSTREAM_DIR" fetch --force origin "$ROCKBOX_BASE_COMMIT"
-git -C "$UPSTREAM_DIR" checkout --force "$ROCKBOX_BASE_COMMIT"
+git -C "$UPSTREAM_DIR" remote remove origin >/dev/null 2>&1 || true
+git -C "$UPSTREAM_DIR" remote add origin "$ROCKBOX_REMOTE"
+
+log "fetching upstream base commit $ROCKBOX_BASE_COMMIT"
+git -C "$UPSTREAM_DIR" fetch --force --depth 1 origin "$ROCKBOX_BASE_COMMIT"
+git -C "$UPSTREAM_DIR" checkout --force FETCH_HEAD
 git -C "$UPSTREAM_DIR" clean -fdx
 git -C "$UPSTREAM_DIR" config user.name "rockbox-hiby-r1-ci"
 git -C "$UPSTREAM_DIR" config user.email "ci@example.invalid"
