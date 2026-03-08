@@ -19,6 +19,7 @@ copies `overlay/` into the upstream checkout before applying the patch series, s
   - `0001-hibyr1-add-bluetooth-UI-menu-integration.patch`
   - `0002-hibyr1-add-bluealsa-pcm-backend-and-routing-hooks.patch`
   - `0003-hibyr1-use-usb-mode-setting-for-adb.patch`
+  - `0004-hibyr1-keep-bluetooth-active-across-bootloader-handoff.patch`
 
 ## Baseline (currently running device build)
 
