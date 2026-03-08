@@ -13,14 +13,41 @@ ROCKBOX_BASE_COMMIT="${ROCKBOX_BASE_COMMIT:-dd21a1d1d9ae4f314eb16d4813414ee72e2a
 TOOLCHAIN_PREFIX="${TOOLCHAIN_PREFIX:-$ROOT_DIR/toolchain}"
 RBDEV_DOWNLOAD="${RBDEV_DOWNLOAD:-$WORK_DIR/rbdev-download}"
 RBDEV_BUILD="${RBDEV_BUILD:-$WORK_DIR/rbdev-build}"
-BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
+GNU_MIRROR="${GNU_MIRROR:-https://ftp.gnu.org/gnu}"
+LINUX_MIRROR="${LINUX_MIRROR:-https://cdn.kernel.org/pub/linux}"
+
+log() {
+  printf '[build] %s\n' "$*"
+}
+
+default_build_jobs() {
+  if command -v nproc >/dev/null 2>&1; then
+    nproc
+  elif command -v getconf >/dev/null 2>&1; then
+    getconf _NPROCESSORS_ONLN
+  else
+    echo 1
+  fi
+}
+
+sha256_cmd() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  else
+    shasum -a 256 "$@"
+  fi
+}
+
+BUILD_JOBS="${BUILD_JOBS:-$(default_build_jobs)}"
 
 mkdir -p "$WORK_DIR" "$OUT_DIR"
 
 if [ ! -d "$UPSTREAM_DIR/.git" ]; then
+  log "cloning upstream Rockbox"
   git clone "$ROCKBOX_REMOTE" "$UPSTREAM_DIR"
 fi
 
+log "checking out upstream base commit $ROCKBOX_BASE_COMMIT"
 git -C "$UPSTREAM_DIR" fetch --force origin "$ROCKBOX_BASE_COMMIT"
 git -C "$UPSTREAM_DIR" checkout --force "$ROCKBOX_BASE_COMMIT"
 git -C "$UPSTREAM_DIR" clean -fdx
@@ -28,13 +55,19 @@ git -C "$UPSTREAM_DIR" config user.name "rockbox-hiby-r1-ci"
 git -C "$UPSTREAM_DIR" config user.email "ci@example.invalid"
 (git -C "$UPSTREAM_DIR" am --abort >/dev/null 2>&1 || true)
 
-mapfile -t PATCHES < <(find "$PATCH_DIR" -maxdepth 1 -type f -name '*.patch' | sort)
+PATCHES=()
+while IFS= read -r patch; do
+  PATCHES+=("$patch")
+done < <(find "$PATCH_DIR" -maxdepth 1 -type f -name '*.patch' | sort)
+
 if [ ${#PATCHES[@]} -eq 0 ]; then
   echo "No patches found in $PATCH_DIR" >&2
   exit 1
 fi
 
+log "applying ${#PATCHES[@]} patches"
 for p in "${PATCHES[@]}"; do
+  log "git am $(basename "$p")"
   git -C "$UPSTREAM_DIR" am "$p"
 done
 
@@ -44,6 +77,9 @@ if [ ! -x "$TOOLCHAIN_PREFIX/bin/mipsel-rockbox-linux-gnu-gcc" ]; then
   export RBDEV_PREFIX="$TOOLCHAIN_PREFIX"
   export RBDEV_DOWNLOAD
   export RBDEV_BUILD
+  export GNU_MIRROR
+  export LINUX_MIRROR
+  log "bootstrapping toolchain via rockboxdev.sh"
   "$UPSTREAM_DIR/tools/rockboxdev.sh" --target=y
 fi
 
@@ -55,12 +91,14 @@ BL_BUILD_DIR="$WORK_DIR/build-hibyr1-bootloader"
 rm -rf "$FW_BUILD_DIR" "$BL_BUILD_DIR"
 mkdir -p "$FW_BUILD_DIR" "$BL_BUILD_DIR"
 
+log "building firmware"
 (
   cd "$FW_BUILD_DIR"
   "$UPSTREAM_DIR/tools/configure" --target=hibyr1 --type=n
   make -j"$BUILD_JOBS"
 )
 
+log "building bootloader"
 (
   cd "$BL_BUILD_DIR"
   "$UPSTREAM_DIR/tools/configure" --target=hibyr1 --type=b
@@ -83,12 +121,14 @@ rockbox_remote=$ROCKBOX_REMOTE
 rockbox_base_commit=$ROCKBOX_BASE_COMMIT
 patched_head=$PATCHED_HEAD
 build_jobs=$BUILD_JOBS
+gnu_mirror=$GNU_MIRROR
+linux_mirror=$LINUX_MIRROR
 META
 
 (
   cd "$OUT_DIR"
-  sha256sum $(ls -1) > SHA256SUMS
+  sha256_cmd $(ls -1) > SHA256SUMS
 )
 
-echo "Build complete. Artifacts in: $OUT_DIR"
+log "build complete; artifacts in $OUT_DIR"
 ls -l "$OUT_DIR"
