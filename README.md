@@ -7,6 +7,10 @@ This repo does not vendor Rockbox source. CI pulls upstream Rockbox at a pinned 
 - `rockbox.r1` (firmware)
 - `bootloader.r1` (bootloader)
 
+Standalone source files that do not exist upstream live in `overlay/`. The build
+copies `overlay/` into the upstream checkout before applying the patch series, so
+`patches/` stays limited to edits against existing upstream files.
+
 ## Baseline (currently running device build)
 
 - Running binary SHA-256: `ada98d8ac6f6ddef7845619e1e5189e829ba92fb1003031ffa0c609d1567ca17`
@@ -16,9 +20,8 @@ This repo does not vendor Rockbox source. CI pulls upstream Rockbox at a pinned 
 - Maintained reviewable patch series (applied in filename order):
   - `0001-hibyr1-add-bluetooth-UI-menu-integration.patch`
   - `0002-hibyr1-add-bluealsa-pcm-backend-and-routing-hooks.patch`
-  - `0003-hibyr1-keep-usb-adb-active-and-add-hosted-runtime-gl.patch`
-  - `0004-hosted-add-devinput-trace-hooks-for-on-device-debugg.patch`
-  - `0005-hibyr1-preserve-EC2-baseline-auxiliary-source-snapsh.patch`
+  - `0003-hibyr1-add-hosted-runtime-glue.patch`
+  - `0004-hibyr1-use-usb-mode-setting-for-adb.patch`
 
 See `baseline/BASELINE.md` for provenance.
 

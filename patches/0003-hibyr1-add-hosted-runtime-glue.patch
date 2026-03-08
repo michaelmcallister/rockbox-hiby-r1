@@ -1,65 +1,14 @@
-From fa31db0aff7120013221f6b77ee30fb560770a73 Mon Sep 17 00:00:00 2001
-From: Michael McAllister <git@sknk.ws>
-Date: Sun, 8 Mar 2026 11:38:28 +0000
-Subject: [PATCH 3/5] hibyr1: keep usb/adb active and add hosted runtime glue
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@example.invalid>
+Date: Sun, 8 Mar 2026 17:50:16 +0000
+Subject: [PATCH 3/4] hibyr1: add hosted runtime glue
 
----
- apps/main.c                                   |  22 +-
- apps/misc.c                                   |  28 +++
- bootloader/hibyos_linux.c                     | 213 ++++++++++++++++--
- firmware/export/system.h                      |   3 +
- firmware/panic.c                              |  28 +++
- firmware/system.c                             |  11 +
- firmware/target/hosted/hiby/usb-hiby-gadget.c |  23 +-
- firmware/target/hosted/system-hosted.c        |  50 ++++
- tools/r1_patcher/r1_patcher.sh                |  13 +-
- 9 files changed, 367 insertions(+), 24 deletions(-)
 
 diff --git a/apps/main.c b/apps/main.c
-index c25847430f..510bcdfc34 100644
+index c25847430f7de8f95eb836925d53fa92aa04939f..2dae97544bd74c1a18ef4a4eaff437a758a3ce4c 100644
 --- a/apps/main.c
 +++ b/apps/main.c
-@@ -153,7 +153,10 @@
- #endif
- #endif /* SDL */
- 
--/*#define AUTOROCK*/ /* define this to check for "autostart.rock" on boot */
-+// #define AUTOROCK /* define this to check for "autostart.rock" on boot */
-+/* Alternatively, you can define autostart plugin path and its argument: */
-+// #define AUTOROCK     VIEWERS_DATA_DIR"/imageviewer.rock"
-+// #define AUTOROCK_ARG "/jpegs/sample.jpg"
- 
- static void init(void);
- /* main(), and various functions called by main() and init() may be
-@@ -214,22 +217,31 @@ int main(void)
- 
- #ifdef AUTOROCK
-     {
--        char filename[MAX_PATH];
--        const char *file =
-+        const char *file = ""AUTOROCK;
-+        file = *file
-+                ? file
-+                :
- #ifdef APPLICATION
-                                 ROCKBOX_DIR
- #else
-                                 PLUGIN_APPS_DIR
- #endif
-                                     "/autostart.rock";
--        if(file_exists(file)) /* no complaint if it doesn't exist */
-+        if (file_exists(file)) /* no complaint if it doesn't exist */
-         {
--            plugin_load(file, NULL); /* start if it does */
-+            plugin_load(file,
-+#ifdef AUTOROCK_ARG
-+                AUTOROCK_ARG
-+#else
-+                NULL
-+#endif
-+                ); /* start if it does */
-         }
-     }
+@@ -230,6 +230,7 @@ int main(void)
  #endif /* #ifdef AUTOROCK */
  
      global_status.last_volume_change = 0;
@@ -68,7 +17,7 @@ index c25847430f..510bcdfc34 100644
       * see definition of INIT_ATTR in config.h */
      CHART(">root_menu");
 diff --git a/apps/misc.c b/apps/misc.c
-index 05f1fa6a93..d0d4a7e740 100644
+index 05f1fa6a93c6df264caa04c0df98cdd11070492c..d0d4a7e740dc38342a5be92b414f7048673b088c 100644
 --- a/apps/misc.c
 +++ b/apps/misc.c
 @@ -660,6 +660,11 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
@@ -111,8 +60,20 @@ index 05f1fa6a93..d0d4a7e740 100644
 +}
 +
  #endif /* ndef __PCTOOL__ */
+diff --git a/apps/misc.h b/apps/misc.h
+index fd326c5a7de7f534227db9f62b73da0cc71ebcd5..b513e94675afd07740ff1979dde11ca650d71298 100644
+--- a/apps/misc.h
++++ b/apps/misc.h
+@@ -128,6 +128,7 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
+ long default_event_handler(long event);
+ bool list_stop_handler(void);
+ void car_adapter_mode_init(void) INIT_ATTR;
++void validate_start_directory_init(void) INIT_ATTR;
+ 
+ /* Unicode byte order mark sequences and lengths */
+ #define BOM_UTF_8 "\xef\xbb\xbf"
 diff --git a/bootloader/hibyos_linux.c b/bootloader/hibyos_linux.c
-index edda204796..c38b12f4ed 100644
+index edda2047968ad8a4e2119e579ad6208eb7310ffa..c38b12f4ed03ab77dcb42f3402d32df0289db8bf 100644
 --- a/bootloader/hibyos_linux.c
 +++ b/bootloader/hibyos_linux.c
 @@ -45,9 +45,12 @@
@@ -399,7 +360,7 @@ index edda204796..c38b12f4ed 100644
  #else
              execl("/tmp/" BOOTFILE, BOOTFILE, NULL);
 diff --git a/firmware/export/system.h b/firmware/export/system.h
-index edbeb5763c..09463f9977 100644
+index edbeb5763c16fd99172e1b072e1aa4e9e3606015..09463f9977837cc0c0a6c00d94965fb359b592ae 100644
 --- a/firmware/export/system.h
 +++ b/firmware/export/system.h
 @@ -28,6 +28,9 @@
@@ -413,7 +374,7 @@ index edbeb5763c..09463f9977 100644
   * to reboot system. */
  extern void system_exception_wait(void);
 diff --git a/firmware/panic.c b/firmware/panic.c
-index 7b2045347a..d97699d905 100644
+index 7b2045347ae012d63aafde6242a523fce2dc76bd..d97699d9053387aee437ec46183614a43def3ebb 100644
 --- a/firmware/panic.c
 +++ b/firmware/panic.c
 @@ -32,6 +32,12 @@
@@ -466,7 +427,7 @@ index 7b2045347a..d97699d905 100644
      lcd_set_viewport(NULL);
  
 diff --git a/firmware/system.c b/firmware/system.c
-index e2fdff0e59..a4d7ccf985 100644
+index e2fdff0e5955a5ceb95dadc3f683e6dee8ca3594..a4d7ccf9850af620a9a2d0e27b5919f2a400e2c9 100644
 --- a/firmware/system.c
 +++ b/firmware/system.c
 @@ -202,3 +202,14 @@ bool detect_original_firmware(void)
@@ -484,48 +445,8 @@ index e2fdff0e59..a4d7ccf985 100644
 +{
 +    return NULL;
 +}
-diff --git a/firmware/target/hosted/hiby/usb-hiby-gadget.c b/firmware/target/hosted/hiby/usb-hiby-gadget.c
-index 91e178dd03..d5b2434ca1 100644
---- a/firmware/target/hosted/hiby/usb-hiby-gadget.c
-+++ b/firmware/target/hosted/hiby/usb-hiby-gadget.c
-@@ -95,12 +95,17 @@ void usb_enable(bool on)
-     logf(">>>>>>>>>>>>>>>>> usb_enable(%d)\n", on);
-     logf("usb enable %d %d\n", on, _usb_mode);
- 
--    /* Ignore usb enable/disable when ADB is enabled so we can fireup adb shell
--     * without entering ums mode
-+    /* Keep ADB attached during Rockbox init: usb_init() toggles usb_enable(false)
-+     * which would otherwise drop the gadget immediately after ADB is started.
-      */
--    //if (_usb_mode != USB_MODE_ADB) {
--        sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/UDC", on ? "13500000.otg_new" : "");
--    //}
-+    if (!on && _usb_mode == USB_MODE_ADB)
-+    {
-+        logf("usb_enable: keep UDC attached in ADB mode");
-+        return;
-+    }
-+
-+    sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/UDC",
-+                     on ? "13500000.otg_new" : "");
- }
- 
- /* This is called by usb thread after usb extract in order to return
-@@ -320,4 +325,12 @@ void usb_init_device(void)
-     sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/strings/0x409/manufacturer", "Rockbox.org");
-     sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/strings/0x409/product", "Rockbox media player");
-     sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/strings/0x409/serialnumber", "0123456789ABCDEF");
-+
-+    /* Force ADB availability on every Rockbox launch so host-side debugging
-+     * does not depend on bootloader-side toggles.
-+     */
-+    enable_adb();
-+    is_adb_running = true;
-+    _usb_mode = USB_MODE_ADB;
-+    logf("usb_init_device: forced adb mode enabled");
- }
 diff --git a/firmware/target/hosted/system-hosted.c b/firmware/target/hosted/system-hosted.c
-index bb20842d79..ca7e9eed4d 100644
+index bb20842d7920c8d51c9c126fcf5598a13aed0449..ca7e9eed4d577813190ecbbef48510ee07f5cb52 100644
 --- a/firmware/target/hosted/system-hosted.c
 +++ b/firmware/target/hosted/system-hosted.c
 @@ -21,6 +21,10 @@
@@ -614,7 +535,7 @@ index bb20842d79..ca7e9eed4d 100644
  {
      backlight_hw_on();
 diff --git a/tools/r1_patcher/r1_patcher.sh b/tools/r1_patcher/r1_patcher.sh
-index 7cc102044b..405e1f3614 100755
+index 7cc102044b6ad4d632dce6fcef6ab91346956ff9..405e1f36141edf2062715a012dc0d6e9a11c69e1 100755
 --- a/tools/r1_patcher/r1_patcher.sh
 +++ b/tools/r1_patcher/r1_patcher.sh
 @@ -180,7 +180,18 @@ cd "$workingdir_out/image_contents"
@@ -637,6 +558,4 @@ index 7cc102044b..405e1f3614 100755
  
  ################################################################################
  ### cleanup
--- 
-2.50.1 (Apple Git-155)
 

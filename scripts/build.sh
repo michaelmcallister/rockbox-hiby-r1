@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${WORK_DIR:-$ROOT_DIR/work}"
 UPSTREAM_DIR="${UPSTREAM_DIR:-$WORK_DIR/rockbox}"
 PATCH_DIR="${PATCH_DIR:-$ROOT_DIR/patches}"
+OVERLAY_DIR="${OVERLAY_DIR:-$ROOT_DIR/overlay}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/out}"
 CCACHE_DIR="${CCACHE_DIR:-$ROOT_DIR/.ccache}"
 
@@ -19,6 +20,19 @@ LINUX_MIRROR="${LINUX_MIRROR:-https://cdn.kernel.org/pub/linux}"
 
 log() {
   printf '[build] %s\n' "$*"
+}
+
+install_overlay() {
+  local src rel dst
+
+  [ -d "$OVERLAY_DIR" ] || return 0
+
+  while IFS= read -r src; do
+    rel="${src#$OVERLAY_DIR/}"
+    dst="$UPSTREAM_DIR/$rel"
+    mkdir -p "$(dirname "$dst")"
+    cp -f "$src" "$dst"
+  done < <(find "$OVERLAY_DIR" -type f | sort)
 }
 
 default_build_jobs() {
@@ -116,6 +130,9 @@ git -C "$UPSTREAM_DIR" clean -fdx
 git -C "$UPSTREAM_DIR" config user.name "rockbox-hiby-r1-ci"
 git -C "$UPSTREAM_DIR" config user.email "ci@example.invalid"
 (git -C "$UPSTREAM_DIR" am --abort >/dev/null 2>&1 || true)
+
+log "installing overlay files"
+install_overlay
 
 PATCHES=()
 while IFS= read -r patch; do

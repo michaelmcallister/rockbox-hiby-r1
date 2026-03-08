@@ -1,14 +1,11 @@
-From 8e4780382a761c3e863d26206d0972cde45835d3 Mon Sep 17 00:00:00 2001
-From: michaelmcallister <michael@example.invalid>
-Date: Sun, 8 Mar 2026 17:30:12 +0000
-Subject: [PATCH] hibyr1: use USB mode setting for ADB
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@example.invalid>
+Date: Sun, 8 Mar 2026 17:50:16 +0000
+Subject: [PATCH 4/4] hibyr1: use USB mode setting for ADB
 
----
- firmware/target/hosted/hiby/usb-hiby-gadget.c | 53 +++++++++----------
- 1 file changed, 26 insertions(+), 27 deletions(-)
 
 diff --git a/firmware/target/hosted/hiby/usb-hiby-gadget.c b/firmware/target/hosted/hiby/usb-hiby-gadget.c
-index 91e178dd03..8c386b1263 100644
+index 91e178dd03aa7d6fbf993d30eb567d3fa79b14ef..8c386b126391e2f53f729a3c42e58c0f6263d930 100644
 --- a/firmware/target/hosted/hiby/usb-hiby-gadget.c
 +++ b/firmware/target/hosted/hiby/usb-hiby-gadget.c
 @@ -42,7 +42,6 @@
@@ -121,6 +118,3 @@ index 91e178dd03..8c386b1263 100644
      sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/strings/0x409/manufacturer", "Rockbox.org");
      sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/strings/0x409/product", "Rockbox media player");
      sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/strings/0x409/serialnumber", "0123456789ABCDEF");
--- 
-2.50.1 (Apple Git-155)
-
