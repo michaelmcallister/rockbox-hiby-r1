@@ -48,6 +48,7 @@ int pcm_alsa_switch_playback_device(const char *device);
 
 #define BT_MAX_DEVICES 32
 #define BT_NAME_LEN 80
+#define BT_BATTERY_LEN 64
 #define BT_LOCAL_PLAYBACK_DEVICE "plughw:0,0"
 #define BT_SYS_SOCKET "/var/run/sys_server"
 #define BT_LIST_FILE "/data/bt_list.txt"
@@ -72,12 +73,19 @@ struct bt_device_menu_data
     bool include_scan_item;
 };
 
+struct bt_status_info
+{
+    bool connected;
+    char battery[BT_BATTERY_LEN];
+    char name[BT_NAME_LEN];
+};
+
 static char bt_selected_mac[18];
 static char bt_selected_name[BT_NAME_LEN];
 static char bt_playback_dev[96] = BT_LOCAL_PLAYBACK_DEVICE;
 
 static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks);
-static bool bt_force_sbc_codec(const char *mac);
+static void bt_force_sbc_codec(const char *mac);
 static bool bt_bluealsa_pcm_ready(const char *mac);
 static bool bt_is_connected(const char *mac);
 static bool bt_prepare_stack(void);
@@ -852,51 +860,12 @@ static bool bt_route_to_bluetooth(const char *mac)
 
 static bool bt_is_connected(const char *mac)
 {
-    FILE *fp = NULL;
-    bool connected = false;
-    bool in_device = false;
-    char line[320];
-    char file_mac[18];
+    struct bt_status_info info;
 
     if (!mac || !*mac)
         return false;
 
-    bt_status_request(mac);
-    fp = fopen(BT_STATUS_FILE, "r");
-    if (fp)
-    {
-        while (fgets(line, sizeof(line), fp))
-        {
-            char *p = line;
-            bt_trim(p);
-
-            if (!p[0])
-                continue;
-
-            if (p[0] == '[')
-            {
-                in_device = bt_extract_mac_from_line(p, file_mac, sizeof(file_mac)) &&
-                            !strcasecmp(file_mac, mac);
-                continue;
-            }
-
-            if (!in_device)
-                continue;
-
-            while (*p == ' ' || *p == '\t')
-                p++;
-
-            if (!strncmp(p, "Connected:", 10))
-            {
-                const char *value = p + 10;
-                connected = bt_status_value_true(value);
-                break;
-            }
-        }
-        fclose(fp);
-    }
-
-    if (connected)
+    if (bt_read_status_info(mac, &info) && info.connected)
         return true;
 
     return bt_bluealsa_pcm_ready(mac);
@@ -995,29 +964,25 @@ static bool bt_lookup_device_name(const char *mac, char *name, size_t name_len)
     return false;
 }
 
-static void bt_read_device_info(const char *mac, bool *connected,
-                                char *battery, size_t battery_len,
-                                char *name, size_t name_len)
+static bool bt_read_status_info(const char *mac, struct bt_status_info *info)
 {
     FILE *fp;
     char line[320];
     char file_mac[18];
+    bool found = false;
     bool in_device = false;
 
-    if (connected)
-        *connected = false;
-    if (battery && battery_len > 0)
-        battery[0] = '\0';
-    if (name && name_len > 0)
-        name[0] = '\0';
+    if (!info || !mac || !*mac)
+        return false;
 
-    if (!mac || !*mac)
-        return;
+    info->connected = false;
+    info->battery[0] = '\0';
+    info->name[0] = '\0';
 
     bt_status_request(mac);
     fp = fopen(BT_STATUS_FILE, "r");
     if (!fp)
-        return;
+        return false;
 
     while (fgets(line, sizeof(line), fp))
     {
@@ -1035,6 +1000,8 @@ static void bt_read_device_info(const char *mac, bool *connected,
         {
             in_device = bt_extract_mac_from_line(p, file_mac, sizeof(file_mac)) &&
                         !strcasecmp(file_mac, mac);
+            if (in_device)
+                found = true;
             continue;
         }
 
@@ -1043,27 +1010,25 @@ static void bt_read_device_info(const char *mac, bool *connected,
 
         if (!strncmp(p, "Connected:", 10))
         {
-            if (connected)
-            {
-                value = p + 10;
-                *connected = bt_status_value_true(value);
-            }
+            value = p + 10;
+            info->connected = bt_status_value_true(value);
         }
         else if (!strncmp(p, "Battery:", 8) || !strncmp(p, "Battery Percentage:", 19))
         {
-            if (battery && battery_len > 0)
-            {
-                value = strchr(p, ':');
-                if (!value)
-                    continue;
+            value = strchr(p, ':');
+            if (!value)
+                continue;
+            value++;
+            while (*value == ' ' || *value == '\t')
                 value++;
-                while (*value == ' ' || *value == '\t')
-                    value++;
-                snprintf(battery, battery_len, "%s", value);
+            if (*value)
+            {
+                snprintf(info->battery, sizeof(info->battery), "%s", value);
+                bt_trim(info->battery);
             }
         }
         else if ((!strncmp(p, "Alias:", 6) || !strncmp(p, "Name:", 5)) &&
-                 name && name_len > 0 && !name[0])
+                 !info->name[0])
         {
             value = strchr(p, ':');
             if (value)
@@ -1074,18 +1039,19 @@ static void bt_read_device_info(const char *mac, bool *connected,
                 if (*value)
                 {
                     char *rw;
-                    snprintf(name, name_len, "%s", value);
-                    bt_trim(name);
-                    rw = strstr(name, " [rw]");
+                    snprintf(info->name, sizeof(info->name), "%s", value);
+                    bt_trim(info->name);
+                    rw = strstr(info->name, " [rw]");
                     if (rw)
                         *rw = '\0';
-                    bt_trim(name);
+                    bt_trim(info->name);
                 }
             }
         }
     }
 
     fclose(fp);
+    return found;
 }
 
 static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
@@ -1111,7 +1077,7 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
     return false;
 }
 
-static bool bt_force_sbc_codec(const char *mac)
+static void bt_force_sbc_codec(const char *mac)
 {
     char mac_u[18];
     char pcm_path[96];
@@ -1119,7 +1085,7 @@ static bool bt_force_sbc_codec(const char *mac)
     int rc;
 
     if (!mac || !*mac)
-        return false;
+        return;
 
     bt_mac_to_underscore(mac, mac_u, sizeof(mac_u));
     snprintf(pcm_path, sizeof(pcm_path),
@@ -1129,7 +1095,6 @@ static bool bt_force_sbc_codec(const char *mac)
 
     rc = bt_run_cmd(cmd);
     bt_log("Force SBC codec rc=%d path=%s", rc, pcm_path);
-    return rc == 0;
 }
 
 static bool bt_prepare_stack(void)
@@ -1338,32 +1303,29 @@ static void bt_show_status(void)
     struct simplelist_info info;
     char active_mac[18];
     char device_name[BT_NAME_LEN];
-    char info_name[BT_NAME_LEN];
-    char battery[64];
-    bool connected = false;
+    struct bt_status_info status;
 
     simplelist_info_init(&info, "Status", 0, NULL);
     simplelist_reset_lines();
 
     if (bt_get_active_mac(active_mac, sizeof(active_mac)))
     {
-        bt_read_device_info(active_mac, &connected, battery, sizeof(battery),
-                            info_name, sizeof(info_name));
+        bt_read_status_info(active_mac, &status);
 
-        if (info_name[0])
-            snprintf(device_name, sizeof(device_name), "%s", info_name);
+        if (status.name[0])
+            snprintf(device_name, sizeof(device_name), "%s", status.name);
         else if (!bt_lookup_device_name(active_mac, device_name, sizeof(device_name)))
             snprintf(device_name, sizeof(device_name), "%s", active_mac);
 
         simplelist_addline("Device: %s", device_name);
         simplelist_addline("MAC: %s", active_mac);
-        simplelist_addline("Connected: %s", connected ? "Yes" : "No");
+        simplelist_addline("Connected: %s", status.connected ? "Yes" : "No");
         simplelist_addline("A2DP PCM: %s",
                            bt_bluealsa_pcm_ready(active_mac) ? "Ready" : "Not ready");
 
-        if (battery[0])
+        if (status.battery[0])
         {
-            simplelist_addline("Battery: %s", battery);
+            simplelist_addline("Battery: %s", status.battery);
         }
     }
     else
