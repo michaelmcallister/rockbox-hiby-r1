@@ -35,10 +35,41 @@ jobs:
           key: ${{ runner.os }}-rockboxdev-mipsel-v1
 
       - name: Build firmware + bootloader
+        id: build
         shell: bash
         run: |
           set -o pipefail
           ./scripts/build.sh 2>&1 | tee build-ci.log
+
+      - name: Publish failure tail
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "== build-ci.log (tail) =="
+            test -f build-ci.log && tail -n 80 build-ci.log || true
+            echo
+            for f in work/rbdev-build/*.log; do
+              [ -f "$f" ] || continue
+              echo "== ${f} (tail) =="
+              tail -n 80 "$f" || true
+              echo
+            done
+          } > failure-summary.txt
+
+          {
+            echo '### Failure tail'
+            echo
+            echo '```text'
+            cat failure-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          summary="$(
+            sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e ':a;N;$!ba;s/\n/%0A/g' \
+              failure-summary.txt
+          )"
+          echo "::error title=Build failure tail::$summary"
 
       - name: Upload artifacts
         if: success()
