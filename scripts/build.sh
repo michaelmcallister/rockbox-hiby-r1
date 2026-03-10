@@ -242,6 +242,9 @@ if ! toolchain_ready; then
     rm -rf "$TOOLCHAIN_PREFIX"
   fi
   rm -rf "$RBDEV_BUILD"
+  export PKG_CONFIG_SYSROOT_DIR="$TOOLCHAIN_PREFIX/mipsel-rockbox-linux-gnu/sysroot"
+  export PKG_CONFIG_LIBDIR="$PKG_CONFIG_SYSROOT_DIR/usr/lib/pkgconfig:$PKG_CONFIG_SYSROOT_DIR/usr/share/pkgconfig"
+  export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
   export RBDEV_PREFIX="$TOOLCHAIN_PREFIX"
   export RBDEV_DOWNLOAD
   export RBDEV_BUILD

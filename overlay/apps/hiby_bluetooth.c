@@ -800,10 +800,7 @@ static void bt_route_to_local(bool show_message)
 
 static bool bt_route_to_bluetooth(const char *mac)
 {
-    char cmd[96];
-    char reply[BT_SYS_REPLY_MAX];
     int rc;
-    int attempt;
 
     if (!mac || !mac[0])
         return false;
@@ -811,50 +808,26 @@ static bool bt_route_to_bluetooth(const char *mac)
     snprintf(bt_playback_dev, sizeof(bt_playback_dev),
              "bluealsa:DEV=%s,PROFILE=a2dp", mac);
 
-    for (attempt = 0; attempt < 4; attempt++)
+    if (!bt_wait_for_bluealsa_pcm(mac, HZ * 6))
     {
-        if (attempt > 0)
-        {
-            bt_log("Route attempt %d: re-preparing stack and reconnecting", attempt + 1);
-            if (!bt_prepare_stack())
-            {
-                bt_log("Route attempt %d: stack prepare failed", attempt + 1);
-                sleep(HZ / 2);
-                continue;
-            }
-
-            snprintf(cmd, sizeof(cmd), "BT:CONNECT:%s", mac);
-            if (bt_sys_command(cmd, reply, sizeof(reply)) == 0)
-                bt_log("Route attempt %d: %s reply=%s", attempt + 1, cmd,
-                       reply[0] ? reply : "<empty>");
-            else
-                bt_log("Route attempt %d: %s failed", attempt + 1, cmd);
-            sleep(HZ / 2);
-        }
-
-        if (!bt_wait_for_bluealsa_pcm(mac, attempt == 0 ? HZ * 6 : HZ * 3))
-        {
-            bool connected = bt_is_connected(mac);
-            bt_log("No BT audio transport for %s (attempt %d, connected=%d)",
-                   mac, attempt + 1, connected ? 1 : 0);
-            bt_log_bluealsa_pcms();
-        }
-        else
-        {
-            bt_force_sbc_codec(mac);
-            rc = pcm_alsa_switch_playback_device(bt_playback_dev);
-            if (rc == 0)
-            {
-                bt_log("Playback route switched: %s", bt_playback_dev);
-                bt_kick_audio_if_playing();
-                return true;
-            }
-
-            bt_log("Playback route switch failed for %s rc=%d (attempt %d)",
-                   bt_playback_dev, rc, attempt + 1);
-        }
+        bool connected = bt_is_connected(mac);
+        bt_log("No BT audio transport for %s after initial wait (connected=%d)",
+               mac, connected ? 1 : 0);
+        bt_log_bluealsa_pcms();
+        bt_route_to_local(false);
+        return false;
     }
 
+    bt_force_sbc_codec(mac);
+    rc = pcm_alsa_switch_playback_device(bt_playback_dev);
+    if (rc == 0)
+    {
+        bt_log("Playback route switched: %s", bt_playback_dev);
+        bt_kick_audio_if_playing();
+        return true;
+    }
+
+    bt_log("Playback route switch failed for %s rc=%d", bt_playback_dev, rc);
     bt_route_to_local(false);
     return false;
 }
@@ -1182,9 +1155,13 @@ static void bt_connect_device(const struct bt_device *device)
         return;
 
     mac = device->mac;
+    splash(0, "Connecting...");
 
     if (!bt_prepare_stack())
+    {
+        splash(HZ * 2, "BT unavailable");
         return;
+    }
 
     if (!device->paired)
     {

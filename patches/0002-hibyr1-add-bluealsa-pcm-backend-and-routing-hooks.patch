@@ -1,14 +1,20 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From c1e5e468728c6ece3bdccac63caac203b2554c0a Mon Sep 17 00:00:00 2001
 From: Codex <codex@example.invalid>
-Date: Sun, 8 Mar 2026 18:07:14 +0000
+Date: Tue, 10 Mar 2026 19:58:16 +0000
 Subject: [PATCH 2/3] hibyr1: add bluealsa pcm backend and routing hooks
 
+---
+ firmware/SOURCES                              |   7 +-
+ firmware/target/hosted/hiby/hibylinux_codec.c | 179 ++++++++++++++-
+ firmware/target/hosted/pcm-alsa.c             | 211 +++++++++++++++++-
+ firmware/target/hosted/pcm-alsa.h             |   6 +
+ 4 files changed, 391 insertions(+), 12 deletions(-)
 
 diff --git a/firmware/SOURCES b/firmware/SOURCES
-index 195b5e0caa3909a6c168e6e2d5ccea0f6defe540..437f8aaf04a2f45e17ec1b037f3b3e85a8a96114 100644
+index 195b5e0caa..4ee86f6013 100644
 --- a/firmware/SOURCES
 +++ b/firmware/SOURCES
-@@ -146,10 +146,14 @@ target/hosted/sonynwz/nwzlinux-codec.c
+@@ -146,10 +146,15 @@ target/hosted/sonynwz/nwzlinux-codec.c
  #endif
  
  #if !defined(BOOTLOADER)
@@ -18,6 +24,7 @@ index 195b5e0caa3909a6c168e6e2d5ccea0f6defe540..437f8aaf04a2f45e17ec1b037f3b3e85
  target/hosted/alsa-controls.c
  #endif
 +#if (defined(HIBY_LINUX) && !defined(SIMULATOR))
++target/hosted/pcm-alsa.c
 +target/hosted/hiby/pcm-alsa-hiby.c
 +target/hosted/alsa-controls.c
 +#endif
@@ -25,7 +32,7 @@ index 195b5e0caa3909a6c168e6e2d5ccea0f6defe540..437f8aaf04a2f45e17ec1b037f3b3e85
  
  #if ((defined(HIBY_LINUX) || defined(FIIO_M3K_LINUX)) && !defined(SIMULATOR))
 diff --git a/firmware/target/hosted/hiby/hibylinux_codec.c b/firmware/target/hosted/hiby/hibylinux_codec.c
-index 656e07a6a1cb92c6c3a7473c8423e780ecd665b8..9b0a7b759cb543926bfc3dc91c16db743268f5db 100644
+index 656e07a6a1..9b0a7b759c 100644
 --- a/firmware/target/hosted/hiby/hibylinux_codec.c
 +++ b/firmware/target/hosted/hiby/hibylinux_codec.c
 @@ -33,11 +33,25 @@
@@ -244,8 +251,379 @@ index 656e07a6a1cb92c6c3a7473c8423e780ecd665b8..9b0a7b759cb543926bfc3dc91c16db74
  
  }
 -
+diff --git a/firmware/target/hosted/pcm-alsa.c b/firmware/target/hosted/pcm-alsa.c
+index 9286369a25..1bdb797264 100644
+--- a/firmware/target/hosted/pcm-alsa.c
++++ b/firmware/target/hosted/pcm-alsa.c
+@@ -51,10 +51,16 @@
+ #include "audiohw.h"
+ #include "pcm-alsa.h"
+ #include "fixedpoint.h"
++#if defined(HIBY_LINUX)
++#include "hiby/pcm-alsa-hiby.h"
++#endif
+ 
+ #include "logf.h"
+ 
+ #include <pthread.h>
++#include <string.h>
++#include <unistd.h>
++#include <errno.h>
+ #include <signal.h>
+ 
+ /* plughw:0,0 works with both, however "default" is recommended.
+@@ -96,9 +102,20 @@ static size_t       pcm_size = 0;
+ 
+ static unsigned int xruns = 0;
+ 
++#if !defined(HIBY_LINUX)
+ static snd_async_handler_t *ahandler = NULL;
++#endif
+ static pthread_mutex_t pcm_mtx;
++#if defined(HIBY_LINUX)
++static bool pcm_mtx_initialized = false;
++static pthread_t poll_thread;
++static volatile bool poll_thread_stop = false;
++static bool poll_thread_running = false;
++static unsigned int poll_interval_us = 10000;
++static char current_alsa_device_buf[128];
++#else
+ static long signal_stack[SIGSTKSZ/sizeof(long)];
++#endif
+ 
+ static const char *playback_dev = DEFAULT_PLAYBACK_DEVICE;
+ 
+@@ -109,12 +126,79 @@ static snd_pcm_stream_t current_alsa_mode;  /* SND_PCM_STREAM_PLAYBACK / _CAPTUR
+ #endif
+ 
+ static const char *current_alsa_device;
++#if defined(HIBY_LINUX)
++static void open_hwdev(const char *device, snd_pcm_stream_t mode);
++static void pcm_dma_apply_settings_nolock(void);
++static void stop_poll_thread(void);
++
++static void ensure_pcm_mutex_initialized(void)
++{
++    if (!pcm_mtx_initialized)
++    {
++        pthread_mutexattr_t attr;
++        pthread_mutexattr_init(&attr);
++        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
++        pthread_mutex_init(&pcm_mtx, &attr);
++        pthread_mutexattr_destroy(&attr);
++        pcm_mtx_initialized = true;
++    }
++}
++
++static bool is_bluealsa_active(void)
++{
++    if (current_alsa_device && *current_alsa_device)
++        return hiby_pcm_is_bluealsa_device(current_alsa_device);
++    return hiby_pcm_is_bluealsa_device(playback_dev);
++}
++
++static bool pcm_params_ready(void)
++{
++    return period_size > 0 && buffer_size > 0 && frames != NULL;
++}
++
++static void stop_poll_thread(void)
++{
++    if (!poll_thread_running)
++        return;
++
++    poll_thread_stop = true;
++    pthread_join(poll_thread, NULL);
++    poll_thread_running = false;
++}
++#endif
+ 
+ void pcm_alsa_set_playback_device(const char *device)
+ {
+     playback_dev = device;
+ }
+ 
++#if defined(HIBY_LINUX)
++int pcm_alsa_switch_playback_device(const char *device)
++{
++    int rc;
++
++    if (!device || !*device)
++        return -1;
++
++    playback_dev = device;
++    if (!handle)
++        return 0;
++
++    ensure_pcm_mutex_initialized();
++    pthread_mutex_lock(&pcm_mtx);
++    open_hwdev(playback_dev, SND_PCM_STREAM_PLAYBACK);
++    pcm_dma_apply_settings_nolock();
++    rc = current_alsa_device && !strcmp(current_alsa_device, playback_dev) ? 0 : -1;
++    pthread_mutex_unlock(&pcm_mtx);
++    return rc;
++}
++
++const char *pcm_alsa_get_playback_device(void)
++{
++    return playback_dev;
++}
++#endif
++
+ #ifdef HAVE_RECORDING
+ void pcm_alsa_set_capture_device(const char *device)
+ {
+@@ -147,6 +231,10 @@ static int set_hwparams(snd_pcm_t *handle)
+         period_size = MIX_FRAME_SAMPLES;
+     }
+ 
++#if defined(HIBY_LINUX)
++    hiby_pcm_adjust_bt_buffering(&period_size, &buffer_size, is_bluealsa_active());
++#endif
++
+     /* choose all parameters */
+     err = snd_pcm_hw_params_any(handle, params);
+     if (err < 0)
+@@ -209,6 +297,10 @@ static int set_hwparams(snd_pcm_t *handle)
+ 
+     if (frames) free(frames);
+     frames = calloc(1, period_size * channels * sizeof(sample_t));
++#if defined(HIBY_LINUX)
++    poll_interval_us = hiby_pcm_calc_poll_interval(real_sample_rate, period_size,
++                                                   is_bluealsa_active());
++#endif
+ 
+     /* write the parameters to device */
+     err = snd_pcm_hw_params(handle, params);
+@@ -228,6 +320,12 @@ error:
+ static int set_swparams(snd_pcm_t *handle)
+ {
+     int err;
++#if defined(HIBY_LINUX)
++    snd_pcm_uframes_t start_threshold =
++        hiby_pcm_start_threshold(buffer_size, period_size, is_bluealsa_active());
++#else
++    snd_pcm_uframes_t start_threshold = buffer_size / 2;
++#endif
+ 
+     snd_pcm_sw_params_t *swparams;
+     snd_pcm_sw_params_malloc(&swparams);
+@@ -239,8 +337,7 @@ static int set_swparams(snd_pcm_t *handle)
+         logf("Unable to determine current swparams for playback: %s", snd_strerror(err));
+         goto error;
+     }
+-    /* start the transfer when the buffer is half full */
+-    err = snd_pcm_sw_params_set_start_threshold(handle, swparams, buffer_size / 2);
++    err = snd_pcm_sw_params_set_start_threshold(handle, swparams, start_threshold);
+     if (err < 0)
+     {
+         logf("Unable to set start threshold mode for playback: %s", snd_strerror(err));
+@@ -380,21 +477,20 @@ static bool copy_frames(bool first)
+     return true;
+ }
+ 
+-static void async_callback(snd_async_handler_t *ahandler)
++static void pcm_pump_locked(snd_pcm_t *handle)
+ {
+     int err;
+ 
+-    if (!ahandler) return;
+-
+-    snd_pcm_t *handle = snd_async_handler_get_pcm(ahandler);
+-
+-    if (!handle) return;
+-
+-    if (pthread_mutex_trylock(&pcm_mtx) != 0)
++    if (!handle)
+         return;
+ 
+     snd_pcm_state_t state = snd_pcm_state(handle);
+ 
++#if defined(HIBY_LINUX)
++    if (state == SND_PCM_STATE_OPEN || !pcm_params_ready())
++        return;
++#endif
++
+     if (state == SND_PCM_STATE_XRUN)
+     {
+         xruns++;
+@@ -493,8 +589,45 @@ static void async_callback(snd_async_handler_t *ahandler)
+     }
+ 
+ abort:
++    return;
++}
++
++#if !defined(HIBY_LINUX)
++static void async_callback(snd_async_handler_t *ahandler)
++{
++    snd_pcm_t *cb_handle;
++
++    if (!ahandler)
++        return;
++
++    cb_handle = snd_async_handler_get_pcm(ahandler);
++    if (!cb_handle)
++        return;
++
++    if (pthread_mutex_trylock(&pcm_mtx) != 0)
++        return;
++
++    pcm_pump_locked(cb_handle);
+     pthread_mutex_unlock(&pcm_mtx);
+ }
++#else
++static void *poll_thread_fn(void *arg)
++{
++    (void)arg;
++
++    while (!poll_thread_stop)
++    {
++        if (handle && pthread_mutex_trylock(&pcm_mtx) == 0)
++        {
++            pcm_pump_locked(handle);
++            pthread_mutex_unlock(&pcm_mtx);
++        }
++        usleep(poll_interval_us);
++    }
++
++    return NULL;
++}
++#endif
+ 
+ static void close_hwdev(void)
+ {
+@@ -505,10 +638,12 @@ static void close_hwdev(void)
+ #ifdef AUDIOHW_MUTE_ON_STOP
+         audiohw_mute(true);
+ #endif
++#if !defined(HIBY_LINUX)
+         if (ahandler) {
+             snd_async_del_handler(ahandler);
+             ahandler = NULL;
+         }
++#endif
+         snd_pcm_close(handle);
+ 
+         handle = NULL;
+@@ -524,14 +659,38 @@ static void alsadev_cleanup(void)
+ {
+     free(frames);
+     frames = NULL;
++#if defined(HIBY_LINUX)
++    stop_poll_thread();
++#endif
+     close_hwdev();
+ }
+ 
+ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
+ {
+     int err;
++#if defined(HIBY_LINUX)
++    snd_pcm_state_t state = SND_PCM_STATE_OPEN;
++
++    ensure_pcm_mutex_initialized();
++
++    if (!device || !*device)
++        panicf("%s(): Invalid empty ALSA device", __func__);
++
++    if (handle)
++        state = snd_pcm_state(handle);
+ 
+     logf("opendev %s (%p)", device, handle);
++    if (handle && current_alsa_device && !strcmp(device, current_alsa_device)
++#ifdef HAVE_RECORDING
++        && current_alsa_mode == mode
++#endif
++        )
++    {
++        if (state != SND_PCM_STATE_DISCONNECTED)
++            return;
++    }
++#else
++    logf("opendev %s (%p)", device, handle);
+ 
+     if (handle && device == current_alsa_device
+ #ifdef HAVE_RECORDING
+@@ -541,16 +700,36 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
+     {
+         return;
+     }
++#endif
+ 
+     /* Close old handle */
+     close_hwdev();
+ 
++#if defined(HIBY_LINUX)
++    if ((err = snd_pcm_open(&handle, device, mode, 0)) < 0)
++    {
++        panicf("%s(): Cannot open device %s: %s", __func__, device,
++               snd_strerror(err));
++    }
++#else
+     if ((err = snd_pcm_open(&handle, device, mode, 0)) < 0)
+     {
+         panicf("%s(): Cannot open device %s: %s", __func__, device, snd_strerror(err));
+     }
++#endif
+     last_sample_rate = 0;
+ 
++#if defined(HIBY_LINUX)
++    if (!poll_thread_running)
++    {
++        poll_thread_stop = false;
++        err = pthread_create(&poll_thread, NULL, poll_thread_fn, NULL);
++        if (err == 0)
++            poll_thread_running = true;
++        else
++            panicf("Unable to start ALSA poll thread: %s", strerror(err));
++    }
++#else
+     pthread_mutexattr_t attr;
+     pthread_mutexattr_init(&attr);
+     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+@@ -584,13 +763,19 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
+     {
+         panicf("Unable to install alternative signal stack: %s", strerror(err));
+     }
++#endif
+ 
+ #ifdef HAVE_RECORDING
+     current_alsa_mode = mode;
+ #else
+     (void)mode;
+ #endif
++#if defined(HIBY_LINUX)
++    snprintf(current_alsa_device_buf, sizeof(current_alsa_device_buf), "%s", device);
++    current_alsa_device = current_alsa_device_buf;
++#else
+     current_alsa_device = device;
++#endif
+ 
+     atexit(alsadev_cleanup);
+ }
+@@ -600,6 +785,9 @@ void pcm_play_dma_init(void)
+     logf("PCM DMA Init");
+ 
+     audiohw_preinit();
++#if defined(HIBY_LINUX)
++    ensure_pcm_mutex_initialized();
++#endif
+ 
+     open_hwdev(playback_dev, SND_PCM_STREAM_PLAYBACK);
+ 
+@@ -608,6 +796,9 @@ void pcm_play_dma_init(void)
+ 
+ void pcm_play_lock(void)
+ {
++#if defined(HIBY_LINUX)
++    ensure_pcm_mutex_initialized();
++#endif
+     pthread_mutex_lock(&pcm_mtx);
+ }
+ 
 diff --git a/firmware/target/hosted/pcm-alsa.h b/firmware/target/hosted/pcm-alsa.h
-index 3fa6ffe9dbeb90c685290d448b085aab592582bb..e133463a4a8d1ef20e17b2c0fcb4913eaf189ed7 100644
+index 3fa6ffe9db..e133463a4a 100644
 --- a/firmware/target/hosted/pcm-alsa.h
 +++ b/firmware/target/hosted/pcm-alsa.h
 @@ -36,6 +36,12 @@ void pcm_alsa_set_playback_device(const char *device);
@@ -261,4 +639,3 @@ index 3fa6ffe9dbeb90c685290d448b085aab592582bb..e133463a4a8d1ef20e17b2c0fcb4913e
  unsigned int pcm_alsa_get_rate(void);
  unsigned int pcm_alsa_get_xruns(void);
  
-
