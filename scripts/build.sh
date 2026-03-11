@@ -307,7 +307,11 @@ META
 
 (
   cd "$OUT_DIR"
-  sha256_cmd $(ls -1) > SHA256SUMS
+  > SHA256SUMS
+  while IFS= read -r artifact; do
+    sha256_cmd "$artifact"
+  done < <(find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -print | sed 's#^\./##' | sort) \
+    > SHA256SUMS
 )
 
 log "build complete; artifacts in $OUT_DIR"

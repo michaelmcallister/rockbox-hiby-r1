@@ -69,11 +69,6 @@ int pcm_alsa_switch_playback_device(const char *device)
     return rc;
 }
 
-const char *pcm_alsa_get_playback_device(void)
-{
-    return playback_dev;
-}
-
 static bool hiby_pcm_keep_hwdev(const char *device, snd_pcm_stream_t mode)
 {
     if (!(handle && device == current_alsa_device

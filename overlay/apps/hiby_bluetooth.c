@@ -23,12 +23,10 @@
 #ifdef HIBY_LINUX
 
 #include <stdio.h>
-#include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <unistd.h>
-#include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
@@ -37,23 +35,20 @@
 #include "audio.h"
 #include "menu.h"
 #include "splash.h"
-#include "rbpaths.h"
-#include "timefuncs.h"
 #include "gui/list.h"
 #include "pcm-alsa.h"
 
 /* HiBy hosted build provides dynamic output routing helper in its
  * target-specific PCM implementation. */
 int pcm_alsa_switch_playback_device(const char *device);
+void hiby_pcm_set_bt_mac(const char *mac);
 
 #define BT_MAX_DEVICES 32
 #define BT_NAME_LEN 80
-#define BT_BATTERY_LEN 64
 #define BT_LOCAL_PLAYBACK_DEVICE "plughw:0,0"
 #define BT_SYS_SOCKET "/var/run/sys_server"
 #define BT_LIST_FILE "/data/bt_list.txt"
 #define BT_SCAN_FILE "/data/bt_scan.txt"
-#define BT_STATUS_FILE "/data/bt_status.txt"
 #define BT_SYS_REPLY_MAX 128
 #define BT_DEVICE_PICK_CANCEL (-1)
 #define BT_DEVICE_PICK_SCAN (-2)
@@ -73,15 +68,7 @@ struct bt_device_menu_data
     bool include_scan_item;
 };
 
-struct bt_status_info
-{
-    bool connected;
-    char battery[BT_BATTERY_LEN];
-    char name[BT_NAME_LEN];
-};
-
 static char bt_selected_mac[18];
-static char bt_selected_name[BT_NAME_LEN];
 static const char *bt_playback_dev = BT_LOCAL_PLAYBACK_DEVICE;
 static char bt_bt_playback_dev[2][96];
 static unsigned int bt_bt_playback_dev_next = 0;
@@ -90,7 +77,6 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks);
 static void bt_force_sbc_codec(const char *mac);
 static bool bt_bluealsa_pcm_ready(const char *mac);
 static bool bt_is_connected(const char *mac);
-static bool bt_read_status_info(const char *mac, struct bt_status_info *info);
 static bool bt_prepare_stack(void);
 static void bt_connect_device(const struct bt_device *device);
 
@@ -102,41 +88,6 @@ static const char *bt_make_bt_playback_dev(const char *mac)
     snprintf(route, sizeof(bt_bt_playback_dev[0]),
              "bluealsa:DEV=%s,PROFILE=a2dp", mac);
     return route;
-}
-
-static void bt_log(const char *fmt, ...)
-{
-    FILE *fp = fopen(ROCKBOX_DIR "/bt_debug.log", "a");
-    if (!fp)
-        fp = fopen("/usr/data/mnt/sd_0/.rockbox/bt_debug.log", "a");
-    if (!fp)
-        return;
-
-    va_list ap;
-    va_start(ap, fmt);
-
-    struct tm *tm = get_time();
-    if (valid_time(tm))
-        fprintf(fp, "[%04d-%02d-%02d %02d:%02d:%02d] ",
-            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-            tm->tm_hour, tm->tm_min, tm->tm_sec);
-    else
-        fprintf(fp, "[tick=%lu] ", (unsigned long)current_tick);
-
-    vfprintf(fp, fmt, ap);
-    fputc('\n', fp);
-
-    va_end(ap);
-    fclose(fp);
-}
-
-static int bt_run_cmd(const char *cmd)
-{
-    int rc;
-    bt_log("CMD: %s", cmd);
-    rc = system(cmd);
-    bt_log("CMD rc=%d", rc);
-    return rc;
 }
 
 static int bt_simplelist_ok_cancel(int action, struct gui_synclist *lists)
@@ -316,10 +267,7 @@ static int bt_sys_command(const char *command, char *reply, size_t reply_size)
 
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0)
-    {
-        bt_log("BT sys socket failed errno=%d", errno);
         return -1;
-    }
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
@@ -327,14 +275,12 @@ static int bt_sys_command(const char *command, char *reply, size_t reply_size)
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
-        bt_log("BT sys connect failed errno=%d", errno);
         close(fd);
         return -1;
     }
 
     if (send(fd, command, strlen(command), 0) < 0)
     {
-        bt_log("BT sys send failed errno=%d", errno);
         close(fd);
         return -1;
     }
@@ -344,7 +290,6 @@ static int bt_sys_command(const char *command, char *reply, size_t reply_size)
         n = recv(fd, reply, reply_size - 1, 0);
         if (n < 0)
         {
-            bt_log("BT sys recv failed errno=%d", errno);
             close(fd);
             return -1;
         }
@@ -382,53 +327,6 @@ static bool bt_sys_reply_ok(const char *reply, const char *command_prefix)
     if (strstr(reply, wait_reply))
         return true;
 
-    return false;
-}
-
-static bool bt_status_value_true(const char *value)
-{
-    if (!value)
-        return false;
-
-    while (*value == ' ' || *value == '\t')
-        value++;
-
-    if (!strncasecmp(value, "yes", 3) || !strncasecmp(value, "true", 4))
-        return true;
-
-    return (*value == '1');
-}
-
-static bool bt_status_request(const char *mac)
-{
-    char cmd[96];
-    char reply[BT_SYS_REPLY_MAX];
-
-    if (!mac || !mac[0])
-        return false;
-
-    snprintf(cmd, sizeof(cmd), "BT:STATUS:%s", mac);
-    if (bt_sys_command(cmd, reply, sizeof(reply)) == 0 &&
-        bt_sys_reply_ok(reply, "BT:STATUS"))
-    {
-        bt_log("%s reply=%s", cmd, reply[0] ? reply : "<empty>");
-        return true;
-    }
-
-    /* Some firmware variants normalize MAC separators differently. */
-    {
-        char mac_u[18];
-        bt_mac_to_underscore(mac, mac_u, sizeof(mac_u));
-        snprintf(cmd, sizeof(cmd), "BT:STATUS:%s", mac_u);
-    }
-    if (bt_sys_command(cmd, reply, sizeof(reply)) == 0 &&
-        bt_sys_reply_ok(reply, "BT:STATUS"))
-    {
-        bt_log("%s reply=%s", cmd, reply[0] ? reply : "<empty>");
-        return true;
-    }
-
-    bt_log("BT:STATUS failed for %s (reply=%s)", mac, reply[0] ? reply : "<empty>");
     return false;
 }
 
@@ -601,12 +499,7 @@ static int bt_load_devices_via_sys_list(struct bt_device *devices, int max_devic
 
     had_old_stamp = bt_get_file_stamp(BT_LIST_FILE, &old_mtime, &old_size);
     if (bt_sys_command("BT:LIST", reply, sizeof(reply)) < 0)
-    {
-        bt_log("BT:LIST command failed");
         return 0;
-    }
-
-    bt_log("BT:LIST reply=%s", reply[0] ? reply : "<empty>");
 
     while (waited < HZ * 3)
     {
@@ -630,9 +523,6 @@ static int bt_load_devices_via_sys_list(struct bt_device *devices, int max_devic
 
     if (count > 1)
         qsort(devices, count, sizeof(devices[0]), bt_device_sort_cmp);
-
-    bt_log("BT:LIST parsed count=%d ready=%d changed=%d waited=%d",
-           count, ready ? 1 : 0, changed ? 1 : 0, waited);
     return count;
 }
 
@@ -651,11 +541,7 @@ static int bt_scan_and_merge_devices(struct bt_device *devices, int count, int m
 
     if (bt_sys_command("BT:SCAN", reply, sizeof(reply)) < 0 ||
         !bt_sys_reply_ok(reply, "BT:SCAN"))
-    {
-        bt_log("BT:SCAN failed reply=%s", reply[0] ? reply : "<empty>");
         return count;
-    }
-    bt_log("BT:SCAN reply=%s", reply[0] ? reply : "<empty>");
 
     while (waited < HZ * 8)
     {
@@ -675,10 +561,7 @@ static int bt_scan_and_merge_devices(struct bt_device *devices, int count, int m
         waited += HZ / 5;
     }
 
-    if (bt_sys_command("BT:CANCEL_SCAN", reply, sizeof(reply)) < 0)
-        bt_log("BT:CANCEL_SCAN failed");
-    else
-        bt_log("BT:CANCEL_SCAN reply=%s", reply[0] ? reply : "<empty>");
+    bt_sys_command("BT:CANCEL_SCAN", reply, sizeof(reply));
 
     while (post_waited < HZ * 3)
     {
@@ -707,9 +590,6 @@ static int bt_scan_and_merge_devices(struct bt_device *devices, int count, int m
 
     if (count > 1)
         qsort(devices, count, sizeof(devices[0]), bt_device_sort_cmp);
-
-    bt_log("BT:SCAN merged count=%d changed=%d waited=%d post_waited=%d",
-           count, changed ? 1 : 0, waited, post_waited);
     return count;
 }
 
@@ -746,17 +626,12 @@ static int bt_choose_device(const char *title, struct bt_device *devices, int co
     return include_scan_item ? info.selection - 1 : info.selection;
 }
 
-static void bt_set_selected_device(const char *mac, const char *name)
+static void bt_set_selected_mac(const char *mac)
 {
     if (mac && mac[0])
         snprintf(bt_selected_mac, sizeof(bt_selected_mac), "%s", mac);
     else
         bt_selected_mac[0] = '\0';
-
-    if (name && name[0])
-        snprintf(bt_selected_name, sizeof(bt_selected_name), "%s", name);
-    else
-        bt_selected_name[0] = '\0';
 }
 
 static void bt_kick_audio_if_playing(void)
@@ -767,44 +642,14 @@ static void bt_kick_audio_if_playing(void)
         audio_pause();
         sleep(HZ / 4);
         audio_resume();
-        bt_log("Playback pause/resume performed after route switch");
     }
-}
-
-static void bt_log_bluealsa_pcms(void)
-{
-    FILE *fp;
-    char line[256];
-    int count = 0;
-
-    fp = popen("bluealsa-cli list-pcms 2>/dev/null", "r");
-    if (!fp)
-    {
-        bt_log("bluealsa-pcm: list-pcms unavailable");
-        return;
-    }
-
-    while (fgets(line, sizeof(line), fp))
-    {
-        bt_trim(line);
-        if (!line[0])
-            continue;
-        bt_log("bluealsa-pcm[%d]: %s", count, line);
-        if (++count >= 4)
-            break;
-    }
-
-    if (count == 0)
-        bt_log("bluealsa-pcm: <none>");
-
-    pclose(fp);
 }
 
 static void bt_route_to_local(bool show_message)
 {
     bt_playback_dev = BT_LOCAL_PLAYBACK_DEVICE;
+    hiby_pcm_set_bt_mac(NULL);
     pcm_alsa_switch_playback_device(bt_playback_dev);
-    bt_log("Playback route switched: %s", bt_playback_dev);
     bt_kick_audio_if_playing();
     if (show_message)
         splash(HZ, "Output: Local");
@@ -821,37 +666,33 @@ static bool bt_route_to_bluetooth(const char *mac)
 
     if (!bt_wait_for_bluealsa_pcm(mac, HZ * 6))
     {
-        bool connected = bt_is_connected(mac);
-        bt_log("No BT audio transport for %s after initial wait (connected=%d)",
-               mac, connected ? 1 : 0);
-        bt_log_bluealsa_pcms();
         bt_route_to_local(false);
         return false;
     }
 
     bt_force_sbc_codec(mac);
+    if (!bt_wait_for_bluealsa_pcm(mac, HZ * 3))
+    {
+        bt_route_to_local(false);
+        return false;
+    }
+
     rc = pcm_alsa_switch_playback_device(bt_playback_dev);
     if (rc == 0)
     {
-        bt_log("Playback route switched: %s", bt_playback_dev);
+        hiby_pcm_set_bt_mac(mac);
         bt_kick_audio_if_playing();
         return true;
     }
 
-    bt_log("Playback route switch failed for %s rc=%d", bt_playback_dev, rc);
     bt_route_to_local(false);
     return false;
 }
 
 static bool bt_is_connected(const char *mac)
 {
-    struct bt_status_info info;
-
     if (!mac || !*mac)
         return false;
-
-    if (bt_read_status_info(mac, &info) && info.connected)
-        return true;
 
     return bt_bluealsa_pcm_ready(mac);
 }
@@ -917,128 +758,6 @@ static bool bt_get_active_mac(char *mac_out, size_t mac_out_len)
     return false;
 }
 
-static bool bt_lookup_device_name(const char *mac, char *name, size_t name_len)
-{
-    struct bt_device devices[BT_MAX_DEVICES];
-    int count;
-    int i;
-
-    if (!mac || !mac[0] || !name || name_len == 0)
-        return false;
-
-    name[0] = '\0';
-
-    if (bt_selected_name[0] && bt_selected_mac[0] &&
-        !strcasecmp(bt_selected_mac, mac))
-    {
-        snprintf(name, name_len, "%s", bt_selected_name);
-        return true;
-    }
-
-    count = bt_load_devices_via_sys_list(devices, BT_MAX_DEVICES);
-
-    for (i = 0; i < count; i++)
-    {
-        if (!strcasecmp(devices[i].mac, mac))
-        {
-            snprintf(name, name_len, "%s", devices[i].name);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static bool bt_read_status_info(const char *mac, struct bt_status_info *info)
-{
-    FILE *fp;
-    char line[320];
-    char file_mac[18];
-    bool found = false;
-    bool in_device = false;
-
-    if (!info || !mac || !*mac)
-        return false;
-
-    info->connected = false;
-    info->battery[0] = '\0';
-    info->name[0] = '\0';
-
-    bt_status_request(mac);
-    fp = fopen(BT_STATUS_FILE, "r");
-    if (!fp)
-        return false;
-
-    while (fgets(line, sizeof(line), fp))
-    {
-        const char *value;
-        char *p = line;
-
-        bt_trim(p);
-        while (*p == ' ' || *p == '\t')
-            p++;
-
-        if (!p[0])
-            continue;
-
-        if (p[0] == '[')
-        {
-            in_device = bt_extract_mac_from_line(p, file_mac, sizeof(file_mac)) &&
-                        !strcasecmp(file_mac, mac);
-            if (in_device)
-                found = true;
-            continue;
-        }
-
-        if (!in_device)
-            continue;
-
-        if (!strncmp(p, "Connected:", 10))
-        {
-            value = p + 10;
-            info->connected = bt_status_value_true(value);
-        }
-        else if (!strncmp(p, "Battery:", 8) || !strncmp(p, "Battery Percentage:", 19))
-        {
-            value = strchr(p, ':');
-            if (!value)
-                continue;
-            value++;
-            while (*value == ' ' || *value == '\t')
-                value++;
-            if (*value)
-            {
-                snprintf(info->battery, sizeof(info->battery), "%s", value);
-                bt_trim(info->battery);
-            }
-        }
-        else if ((!strncmp(p, "Alias:", 6) || !strncmp(p, "Name:", 5)) &&
-                 !info->name[0])
-        {
-            value = strchr(p, ':');
-            if (value)
-            {
-                value++;
-                while (*value == ' ' || *value == '\t')
-                    value++;
-                if (*value)
-                {
-                    char *rw;
-                    snprintf(info->name, sizeof(info->name), "%s", value);
-                    bt_trim(info->name);
-                    rw = strstr(info->name, " [rw]");
-                    if (rw)
-                        *rw = '\0';
-                    bt_trim(info->name);
-                }
-            }
-        }
-    }
-
-    fclose(fp);
-    return found;
-}
-
 static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
 {
     int ticks = 0;
@@ -1049,16 +768,12 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
     while (ticks < timeout_ticks)
     {
         if (bt_bluealsa_pcm_ready(mac))
-        {
-            bt_log("BlueALSA PCM ready for %s after %d ticks", mac, ticks);
             return true;
-        }
 
         sleep(HZ / 5);
         ticks += HZ / 5;
     }
 
-    bt_log("BlueALSA PCM not ready for %s (timeout=%d ticks)", mac, timeout_ticks);
     return false;
 }
 
@@ -1067,19 +782,16 @@ static void bt_force_sbc_codec(const char *mac)
     char mac_u[18];
     char pcm_path[96];
     char cmd[256];
-    int rc;
 
     if (!mac || !*mac)
         return;
 
     bt_mac_to_underscore(mac, mac_u, sizeof(mac_u));
     snprintf(pcm_path, sizeof(pcm_path),
-        "/org/bluealsa/hci0/dev_%s/a2dpsrc/sink", mac_u);
+             "/org/bluealsa/hci0/dev_%s/a2dpsrc/sink", mac_u);
     snprintf(cmd, sizeof(cmd),
-        "bluealsa-cli codec '%s' SBC >/tmp/rb_bt_codec.log 2>&1", pcm_path);
-
-    rc = bt_run_cmd(cmd);
-    bt_log("Force SBC codec rc=%d path=%s", rc, pcm_path);
+             "bluealsa-cli codec '%s' SBC >/tmp/rb_bt_codec.log 2>&1", pcm_path);
+    system(cmd);
 }
 
 static bool bt_prepare_stack(void)
@@ -1087,31 +799,21 @@ static bool bt_prepare_stack(void)
     char reply[BT_SYS_REPLY_MAX];
     int i;
 
-    bt_run_cmd("/usr/bin/bt_enable >/tmp/rb_bt_enable.log 2>&1");
+    system("/usr/bin/bt_enable >/tmp/rb_bt_enable.log 2>&1");
 
     for (i = 0; i < 12; i++)
     {
         reply[0] = '\0';
         if (bt_sys_command("BT:LIST", reply, sizeof(reply)) == 0 &&
             bt_sys_reply_ok(reply, "BT:LIST"))
-        {
-            if (i > 0)
-                bt_log("BT stack ready after %d probes", i + 1);
             return true;
-        }
-        bt_log("BT:LIST pending/fail reply=%s", reply[0] ? reply : "<empty>");
 
         reply[0] = '\0';
-        if (bt_sys_command("BT:ON", reply, sizeof(reply)) == 0 &&
-            bt_sys_reply_ok(reply, "BT:ON"))
-            bt_log("BT:ON reply=%s", reply[0] ? reply : "<empty>");
-        else
-            bt_log("BT:ON pending/fail reply=%s", reply[0] ? reply : "<empty>");
+        bt_sys_command("BT:ON", reply, sizeof(reply));
 
         sleep(HZ / 5);
     }
 
-    bt_log("BT stack prepare timed out");
     return false;
 }
 
@@ -1156,11 +858,9 @@ static void bt_connect_device(const struct bt_device *device)
     char cmd[96];
     char reply[BT_SYS_REPLY_MAX];
     int ctl_rc;
-    int i;
-    bool pair_reply_ok = true;
-    bool connected;
+    bool routed;
     bool connect_reply_ok;
-    bool connected_confirmed = false;
+    bool pair_reply_ok = true;
 
     if (!device || !device->mac[0])
         return;
@@ -1179,8 +879,6 @@ static void bt_connect_device(const struct bt_device *device)
         snprintf(cmd, sizeof(cmd), "BT:PAIR:%s", mac);
         ctl_rc = bt_sys_command(cmd, reply, sizeof(reply));
         pair_reply_ok = (ctl_rc == 0) && bt_sys_reply_ok(reply, "BT:PAIR");
-        bt_log("BT:PAIR rc=%d reply=%s for %s", ctl_rc,
-               reply[0] ? reply : "<empty>", mac);
         if (pair_reply_ok)
             sleep(HZ / 2);
     }
@@ -1188,78 +886,37 @@ static void bt_connect_device(const struct bt_device *device)
     snprintf(cmd, sizeof(cmd), "BT:CONNECT:%s", mac);
     ctl_rc = bt_sys_command(cmd, reply, sizeof(reply));
     connect_reply_ok = (ctl_rc == 0) && bt_sys_reply_ok(reply, "BT:CONNECT");
-    bt_log("BT:CONNECT rc=%d reply=%s for %s", ctl_rc,
-           reply[0] ? reply : "<empty>", mac);
+
+    if (!pair_reply_ok && !device->paired)
+    {
+        splash(HZ * 2, "BT pair failed");
+        return;
+    }
 
     if (!connect_reply_ok)
     {
-        if (bt_prepare_stack())
-        {
-            sleep(HZ / 4);
-            ctl_rc = bt_sys_command(cmd, reply, sizeof(reply));
-            connect_reply_ok = (ctl_rc == 0) && bt_sys_reply_ok(reply, "BT:CONNECT");
-            bt_log("BT:CONNECT retry rc=%d reply=%s for %s", ctl_rc,
-                   reply[0] ? reply : "<empty>", mac);
-        }
-    }
-
-    if (!pair_reply_ok && !connect_reply_ok)
-        bt_log("Pair/connect failed for %s", mac);
-
-    /* sys_server may report OK before bt_status.txt is populated; treat
-     * successful command as connected-intent and verify opportunistically. */
-    connected = connect_reply_ok;
-    sleep(HZ / 2);
-    for (i = 0; i < 10; i++)
-    {
-        if (bt_is_connected(mac))
-        {
-            connected = true;
-            connected_confirmed = true;
-            break;
-        }
-        sleep(HZ / 4);
-    }
-
-    bt_log("Post-connect state %s: %s (cmd_ok=%d confirmed=%d)",
-           mac, connected ? "connected" : "not-connected",
-           connect_reply_ok ? 1 : 0, connected_confirmed ? 1 : 0);
-
-    if (connected)
-    {
-        bool routed;
-
-        if (!bt_bluealsa_pcm_ready(mac))
-            bt_log("No PCM yet after connect; waiting for transport without profile override");
-
-        bt_set_selected_device(mac, device->name);
-        bt_log("Connected: %s", mac);
-
-        routed = bt_route_to_bluetooth(mac);
-        if (!routed)
-        {
-            bt_log("Route setup failed for %s, running one-shot recovery", mac);
-            if (bt_prepare_stack())
-            {
-                snprintf(cmd, sizeof(cmd), "BT:CONNECT:%s", mac);
-                ctl_rc = bt_sys_command(cmd, reply, sizeof(reply));
-                bt_log("Recovery %s rc=%d reply=%s", cmd, ctl_rc,
-                       reply[0] ? reply : "<empty>");
-                sleep(HZ / 2);
-                routed = bt_route_to_bluetooth(mac);
-            }
-        }
-
-        if (routed)
-            splash(HZ, "BT connected");
-        else
-            splash(HZ * 2, "BT connected, no audio route");
-    }
-    else
-    {
-        bt_log("Connect failed: %s", mac);
         splash(HZ * 2, "BT connect failed");
+        return;
     }
+
+    bt_set_selected_mac(mac);
+
+    routed = bt_route_to_bluetooth(mac);
+    if (!routed)
+    {
+        snprintf(cmd, sizeof(cmd), "BT:CONNECT:%s", mac);
+        ctl_rc = bt_sys_command(cmd, reply, sizeof(reply));
+        if (ctl_rc == 0 && bt_sys_reply_ok(reply, "BT:CONNECT"))
+        {
+            sleep(HZ / 2);
+            routed = bt_route_to_bluetooth(mac);
+        }
+    }
+
+    if (routed)
+        splash(HZ, "BT connected");
+    else
+        splash(HZ * 2, "BT connected, no audio route");
 }
 
 static void bt_disconnect(void)
@@ -1275,15 +932,11 @@ static void bt_disconnect(void)
     if (mac[0])
     {
         snprintf(cmd, sizeof(cmd), "BT:DISCONNECT:%s", mac);
-        if (bt_sys_command(cmd, reply, sizeof(reply)) == 0)
-            bt_log("%s reply=%s", cmd, reply[0] ? reply : "<empty>");
-        else
-            bt_log("%s failed", cmd);
+        bt_sys_command(cmd, reply, sizeof(reply));
     }
 
-    bt_set_selected_device(NULL, NULL);
+    bt_set_selected_mac(NULL);
     bt_route_to_local(false);
-    bt_log("Disconnect requested for %s", mac[0] ? mac : "<none>");
     splash(HZ, "Disconnected");
 }
 
@@ -1291,31 +944,24 @@ static void bt_show_status(void)
 {
     struct simplelist_info info;
     char active_mac[18];
-    char device_name[BT_NAME_LEN];
-    struct bt_status_info status;
 
     simplelist_info_init(&info, "Status", 0, NULL);
     simplelist_reset_lines();
 
     if (bt_get_active_mac(active_mac, sizeof(active_mac)))
     {
-        bt_read_status_info(active_mac, &status);
-
-        if (status.name[0])
-            snprintf(device_name, sizeof(device_name), "%s", status.name);
-        else if (!bt_lookup_device_name(active_mac, device_name, sizeof(device_name)))
-            snprintf(device_name, sizeof(device_name), "%s", active_mac);
-
-        simplelist_addline("Device: %s", device_name);
+        simplelist_addline("Device: Bluetooth");
         simplelist_addline("MAC: %s", active_mac);
-        simplelist_addline("Connected: %s", status.connected ? "Yes" : "No");
+        simplelist_addline("Connected: %s",
+                           bt_is_connected(active_mac) ? "Yes" : "No");
         simplelist_addline("A2DP PCM: %s",
                            bt_bluealsa_pcm_ready(active_mac) ? "Ready" : "Not ready");
-
-        if (status.battery[0])
-        {
-            simplelist_addline("Battery: %s", status.battery);
-        }
+    }
+    else if (bt_selected_mac[0])
+    {
+        simplelist_addline("Device: Last selected");
+        simplelist_addline("MAC: %s", bt_selected_mac);
+        simplelist_addline("Connected: No");
     }
     else
     {
@@ -1338,8 +984,6 @@ int hiby_bluetooth_menu(void)
     };
 
     int action = -1;
-
-    bt_log("Bluetooth menu opened");
 
     while (true)
     {
@@ -1373,8 +1017,6 @@ int hiby_bluetooth_menu(void)
                 break;
         }
     }
-
-    bt_log("Bluetooth menu closed");
     return 0;
 }
 

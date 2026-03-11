@@ -6,7 +6,35 @@
 
 #include "pcm-alsa-hiby.h"
 
+#include <ctype.h>
 #include <string.h>
+
+static char hiby_pcm_bt_mac[18];
+
+void hiby_pcm_set_bt_mac(const char *mac)
+{
+    size_t i;
+
+    if (!mac || !mac[0])
+    {
+        hiby_pcm_bt_mac[0] = '\0';
+        return;
+    }
+
+    for (i = 0; mac[i] != '\0' && i + 1 < sizeof(hiby_pcm_bt_mac); i++)
+    {
+        char c = mac[i];
+        if (c == ':')
+            c = '_';
+        hiby_pcm_bt_mac[i] = (char)toupper((unsigned char)c);
+    }
+    hiby_pcm_bt_mac[i] = '\0';
+}
+
+const char *hiby_pcm_get_bt_mac(void)
+{
+    return hiby_pcm_bt_mac[0] ? hiby_pcm_bt_mac : NULL;
+}
 
 bool hiby_pcm_is_bluealsa_device(const char *device)
 {

@@ -1,13 +1,13 @@
-From 65f086711eca2d8ced86a0803cc5ef0ecd3cf5b9 Mon Sep 17 00:00:00 2001
+From d10acf3d5628d2391935ca226f4d18528923d088 Mon Sep 17 00:00:00 2001
 From: Codex <codex@example.invalid>
 Date: Tue, 10 Mar 2026 23:11:10 +0000
 Subject: [PATCH] hibyr1: add bluealsa pcm backend and routing hooks
 
 ---
  firmware/SOURCES                              |   3 +
- firmware/target/hosted/hiby/hibylinux_codec.c | 181 +++++++++++++++++-
- firmware/target/hosted/pcm-alsa.c             |  78 ++++++--
- 3 files changed, 247 insertions(+), 15 deletions(-)
+ firmware/target/hosted/hiby/hibylinux_codec.c | 140 +++++++++++++++++-
+ firmware/target/hosted/pcm-alsa.c             |  78 ++++++++--
+ 3 files changed, 206 insertions(+), 15 deletions(-)
 
 diff --git a/firmware/SOURCES b/firmware/SOURCES
 index 195b5e0caa..549999f022 100644
@@ -24,10 +24,10 @@ index 195b5e0caa..549999f022 100644
  #endif
  
 diff --git a/firmware/target/hosted/hiby/hibylinux_codec.c b/firmware/target/hosted/hiby/hibylinux_codec.c
-index 656e07a6a1..5f0f93db98 100644
+index 656e07a6a1..e71769ef9c 100644
 --- a/firmware/target/hosted/hiby/hibylinux_codec.c
 +++ b/firmware/target/hosted/hiby/hibylinux_codec.c
-@@ -32,12 +32,26 @@
+@@ -32,12 +32,24 @@
  #include "panic.h"
  #include "sysfs.h"
  #include "alsa-controls.h"
@@ -38,8 +38,6 @@ index 656e07a6a1..5f0f93db98 100644
  
  #include "logf.h"
  
-+#include <ctype.h>
-+#include <stdbool.h>
 +#include <stdio.h>
 +#include <string.h>
 +#include <sys/socket.h>
@@ -55,44 +53,12 @@ index 656e07a6a1..5f0f93db98 100644
  static int hw_init = 0;
  
  static long int vol_l_hw = 255;
-@@ -45,6 +59,166 @@ static long int vol_r_hw = 255;
+@@ -45,6 +57,127 @@ static long int vol_r_hw = 255;
  static long int last_ps = -1;
  
  static int muted = -1;
 +static int bt_absvol_last_step = -1;
 +static char bt_absvol_last_mac[18];
-+
-+static bool hiby_is_bluealsa_device(const char *device)
-+{
-+    return device && !strncmp(device, "bluealsa:", 9);
-+}
-+
-+static bool hiby_parse_bluealsa_mac_underscore(const char *device, char *mac, size_t mac_size)
-+{
-+    const char *dev_key = "DEV=";
-+    const char *start;
-+    size_t i = 0;
-+
-+    if (!device || !mac || mac_size < 18)
-+        return false;
-+
-+    start = strstr(device, dev_key);
-+    if (!start)
-+        return false;
-+    start += strlen(dev_key);
-+
-+    while (start[i] && start[i] != ',' && i + 1 < mac_size)
-+    {
-+        char c = start[i];
-+        if (c == ':')
-+            c = '_';
-+        mac[i] = (char)toupper((unsigned char)c);
-+        i++;
-+    }
-+    mac[i] = '\0';
-+
-+    return i == 17;
-+}
 +
 +static int hiby_volume_to_absvol_step(int volume_cb)
 +{
@@ -180,22 +146,15 @@ index 656e07a6a1..5f0f93db98 100644
 +
 +static void hiby_notify_bt_absvol(int volume_cb)
 +{
-+    const char *device = pcm_alsa_get_playback_device();
-+    char mac_u[18];
++    const char *mac_u = hiby_pcm_get_bt_mac();
 +    char cmd[96];
 +    char reply[128];
 +    int step;
 +
-+    if (!hiby_is_bluealsa_device(device))
++    if (!mac_u || !mac_u[0])
 +    {
 +        bt_absvol_last_step = -1;
 +        bt_absvol_last_mac[0] = '\0';
-+        return;
-+    }
-+
-+    if (!hiby_parse_bluealsa_mac_underscore(device, mac_u, sizeof(mac_u)))
-+    {
-+        logf("bt absvol: no MAC in '%s'", device ? device : "<null>");
 +        return;
 +    }
 +
@@ -222,7 +181,7 @@ index 656e07a6a1..5f0f93db98 100644
  
  void audiohw_mute(int mute)
  {
-@@ -126,6 +300,7 @@ void audiohw_set_frequency(int fsel)
+@@ -126,6 +259,7 @@ void audiohw_set_frequency(int fsel)
  
  void audiohw_set_volume(int vol_l, int vol_r)
  {
@@ -230,7 +189,7 @@ index 656e07a6a1..5f0f93db98 100644
      logf("hw vol %d %d", vol_l, vol_r);
  
      long l,r;
-@@ -141,6 +316,9 @@ void audiohw_set_volume(int vol_l, int vol_r)
+@@ -141,6 +275,9 @@ void audiohw_set_volume(int vol_l, int vol_r)
  
      alsa_controls_set_ints("Left Playback Volume", 1, &l);
      alsa_controls_set_ints("Right Playback Volume", 1, &r);
@@ -240,7 +199,7 @@ index 656e07a6a1..5f0f93db98 100644
  }
  
  void audiohw_set_filter_roll_off(int value)
-@@ -155,4 +333,3 @@ void audiohw_set_filter_roll_off(int value)
+@@ -155,4 +292,3 @@ void audiohw_set_filter_roll_off(int value)
      alsa_controls_set_ints("Digital Filter", 1, &value_hw);
  
  }
