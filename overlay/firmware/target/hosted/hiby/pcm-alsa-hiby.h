@@ -8,6 +8,10 @@
 #include <stdbool.h>
 #include <alsa/asoundlib.h>
 
+/* HiBy-only runtime playback route control. */
+int pcm_alsa_switch_playback_device(const char *device);
+const char *pcm_alsa_get_playback_device(void);
+
 bool hiby_pcm_is_bluealsa_device(const char *device);
 
 void hiby_pcm_adjust_bt_buffering(snd_pcm_sframes_t *period_size,

@@ -82,7 +82,9 @@ struct bt_status_info
 
 static char bt_selected_mac[18];
 static char bt_selected_name[BT_NAME_LEN];
-static char bt_playback_dev[96] = BT_LOCAL_PLAYBACK_DEVICE;
+static const char *bt_playback_dev = BT_LOCAL_PLAYBACK_DEVICE;
+static char bt_bt_playback_dev[2][96];
+static unsigned int bt_bt_playback_dev_next = 0;
 
 static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks);
 static void bt_force_sbc_codec(const char *mac);
@@ -91,6 +93,16 @@ static bool bt_is_connected(const char *mac);
 static bool bt_read_status_info(const char *mac, struct bt_status_info *info);
 static bool bt_prepare_stack(void);
 static void bt_connect_device(const struct bt_device *device);
+
+static const char *bt_make_bt_playback_dev(const char *mac)
+{
+    char *route = bt_bt_playback_dev[bt_bt_playback_dev_next];
+
+    bt_bt_playback_dev_next ^= 1;
+    snprintf(route, sizeof(bt_bt_playback_dev[0]),
+             "bluealsa:DEV=%s,PROFILE=a2dp", mac);
+    return route;
+}
 
 static void bt_log(const char *fmt, ...)
 {
@@ -790,7 +802,7 @@ static void bt_log_bluealsa_pcms(void)
 
 static void bt_route_to_local(bool show_message)
 {
-    snprintf(bt_playback_dev, sizeof(bt_playback_dev), "%s", BT_LOCAL_PLAYBACK_DEVICE);
+    bt_playback_dev = BT_LOCAL_PLAYBACK_DEVICE;
     pcm_alsa_switch_playback_device(bt_playback_dev);
     bt_log("Playback route switched: %s", bt_playback_dev);
     bt_kick_audio_if_playing();
@@ -805,8 +817,7 @@ static bool bt_route_to_bluetooth(const char *mac)
     if (!mac || !mac[0])
         return false;
 
-    snprintf(bt_playback_dev, sizeof(bt_playback_dev),
-             "bluealsa:DEV=%s,PROFILE=a2dp", mac);
+    bt_playback_dev = bt_make_bt_playback_dev(mac);
 
     if (!bt_wait_for_bluealsa_pcm(mac, HZ * 6))
     {
