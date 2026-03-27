@@ -12,10 +12,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "pcm-internal.h"
 #include "pcm-alsa-hiby.h"
 
 static void open_hwdev(const char *device, snd_pcm_stream_t mode);
-static void pcm_dma_apply_settings_nolock(void);
 static void pcm_pump_locked(snd_pcm_t *handle);
 
 static pthread_t hiby_pcm_poll_thread;
@@ -63,7 +63,7 @@ int pcm_alsa_switch_playback_device(const char *device)
     hiby_pcm_mutex_init_once();
     pthread_mutex_lock(&pcm_mtx);
     open_hwdev(playback_dev, SND_PCM_STREAM_PLAYBACK);
-    pcm_dma_apply_settings_nolock();
+    pcm_apply_settings();
     rc = (current_alsa_device == playback_dev) ? 0 : -1;
     pthread_mutex_unlock(&pcm_mtx);
     return rc;
