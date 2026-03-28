@@ -128,28 +128,12 @@ struct pcm_sink hiby_bt_pcm_sink = {
     },
 };
 
-int pcm_alsa_switch_playback_device(const char *device)
-{
-    int rc;
-
-    if (!device || !*device)
-        return -1;
-
-    playback_dev = device;
-    if (!handle)
-        return 0;
-
-    hiby_pcm_mutex_init_once();
-    pthread_mutex_lock(&pcm_mtx);
-    open_hwdev(playback_dev, SND_PCM_STREAM_PLAYBACK);
-    pcm_apply_settings();
-    rc = (current_alsa_device == playback_dev) ? 0 : -1;
-    pthread_mutex_unlock(&pcm_mtx);
-    return rc;
-}
-
 static bool hiby_pcm_keep_hwdev(const char *device, snd_pcm_stream_t mode)
 {
+#ifndef HAVE_RECORDING
+    (void)mode;
+#endif
+
     if (!(handle && device == current_alsa_device
 #ifdef HAVE_RECORDING
           && current_alsa_mode == mode

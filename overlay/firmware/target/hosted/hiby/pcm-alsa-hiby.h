@@ -8,8 +8,7 @@
 #include <stdbool.h>
 #include <alsa/asoundlib.h>
 
-/* HiBy-only runtime playback route control. */
-int pcm_alsa_switch_playback_device(const char *device);
+/* HiBy-only bluetooth sink state helpers. */
 void hiby_pcm_set_bt_device(const char *device);
 const char *hiby_pcm_get_bt_device(void);
 void hiby_pcm_set_bt_mac(const char *mac);
