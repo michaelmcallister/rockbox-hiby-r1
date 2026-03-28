@@ -36,11 +36,12 @@
 #include "menu.h"
 #include "splash.h"
 #include "gui/list.h"
+#include "pcm.h"
 #include "pcm-alsa.h"
 
 /* HiBy hosted build provides dynamic output routing helper in its
  * target-specific PCM implementation. */
-int pcm_alsa_switch_playback_device(const char *device);
+void hiby_pcm_set_bt_device(const char *device);
 void hiby_pcm_set_bt_mac(const char *mac);
 
 #define BT_MAX_DEVICES 32
@@ -648,8 +649,9 @@ static void bt_kick_audio_if_playing(void)
 static void bt_route_to_local(bool show_message)
 {
     bt_playback_dev = BT_LOCAL_PLAYBACK_DEVICE;
+    hiby_pcm_set_bt_device(NULL);
     hiby_pcm_set_bt_mac(NULL);
-    pcm_alsa_switch_playback_device(bt_playback_dev);
+    pcm_set_current_sink(PCM_SINK_BUILTIN);
     bt_kick_audio_if_playing();
     if (show_message)
         splash(HZ, "Output: Local");
@@ -677,10 +679,11 @@ static bool bt_route_to_bluetooth(const char *mac)
         return false;
     }
 
-    rc = pcm_alsa_switch_playback_device(bt_playback_dev);
+    hiby_pcm_set_bt_device(bt_playback_dev);
+    hiby_pcm_set_bt_mac(mac);
+    rc = pcm_set_current_sink(PCM_SINK_HIBY_BT) ? 0 : -1;
     if (rc == 0)
     {
-        hiby_pcm_set_bt_mac(mac);
         bt_kick_audio_if_playing();
         return true;
     }

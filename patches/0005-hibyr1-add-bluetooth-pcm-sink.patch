@@ -1,0 +1,112 @@
+From 2ebf1d4590c95adbdf6a301028f2b51f0dbc15be Mon Sep 17 00:00:00 2001
+From: rockbox-hiby-r1-ci <ci@example.invalid>
+Date: Sat, 28 Mar 2026 06:26:59 +0000
+Subject: [PATCH] hiby: add bluetooth pcm sink
+
+---
+ firmware/export/pcm.h             |  1 +
+ firmware/export/pcm_sink.h        |  6 ++++++
+ firmware/pcm.c                    | 32 ++++++++++++++++++++++++++++++-
+ firmware/target/hosted/pcm-alsa.c |  4 ++++
+ 4 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/firmware/export/pcm.h b/firmware/export/pcm.h
+index 5f1509a..3ebde28 100644
+--- a/firmware/export/pcm.h
++++ b/firmware/export/pcm.h
+@@ -63,6 +63,7 @@ void pcm_postinit(void);
+ bool pcm_is_initialized(void);
+ 
+ enum pcm_sink_ids pcm_current_sink(void);
++bool pcm_set_current_sink(enum pcm_sink_ids sink);
+ const struct pcm_sink_caps* pcm_sink_caps(enum pcm_sink_ids sink);
+ 
+ /* shortcut for plugins */
+diff --git a/firmware/export/pcm_sink.h b/firmware/export/pcm_sink.h
+index 27c0c31..c5de10b 100644
+--- a/firmware/export/pcm_sink.h
++++ b/firmware/export/pcm_sink.h
+@@ -51,7 +51,13 @@ struct pcm_sink {
+ 
+ enum pcm_sink_ids {
+     PCM_SINK_BUILTIN = 0,
++#if defined(HIBY_LINUX)
++    PCM_SINK_HIBY_BT,
++#endif
+ };
+ 
+ /* defined in each platform pcm source */
+ extern struct pcm_sink builtin_pcm_sink;
++#if defined(HIBY_LINUX)
++extern struct pcm_sink hiby_bt_pcm_sink;
++#endif
+diff --git a/firmware/pcm.c b/firmware/pcm.c
+index 08383ac..a7acf66 100644
+--- a/firmware/pcm.c
++++ b/firmware/pcm.c
+@@ -79,8 +79,11 @@
+ /* 'true' when all stages of pcm initialization have completed */
+ static bool pcm_is_ready = false;
+ 
+-static struct pcm_sink* sinks[1] = {
++static struct pcm_sink* sinks[] = {
+     [PCM_SINK_BUILTIN] = &builtin_pcm_sink,
++#if defined(HIBY_LINUX)
++    [PCM_SINK_HIBY_BT] = &hiby_bt_pcm_sink,
++#endif
+ };
+ static enum pcm_sink_ids cur_sink = PCM_SINK_BUILTIN;
+ 
+@@ -279,6 +282,33 @@ enum pcm_sink_ids pcm_current_sink(void)
+     return cur_sink;
+ }
+ 
++bool pcm_set_current_sink(enum pcm_sink_ids sink)
++{
++    struct pcm_sink* old_sink;
++    struct pcm_sink* new_sink;
++
++    if ((unsigned int)sink >= ARRAYLEN(sinks) || sinks[sink] == NULL)
++        return false;
++
++    if (cur_sink == sink)
++        return true;
++
++    pcm_wait_for_init();
++
++    old_sink = sinks[cur_sink];
++    new_sink = sinks[sink];
++
++    old_sink->ops.lock();
++    cur_sink = sink;
++    old_sink->ops.unlock();
++
++    new_sink->ops.lock();
++    pcm_apply_settings();
++    new_sink->ops.unlock();
++
++    return true;
++}
++
+ const struct pcm_sink_caps* pcm_sink_caps(enum pcm_sink_ids sink)
+ {
+     return &sinks[sink]->caps;
+diff --git a/firmware/target/hosted/pcm-alsa.c b/firmware/target/hosted/pcm-alsa.c
+index 7aa8e54..00d2a4c 100644
+--- a/firmware/target/hosted/pcm-alsa.c
++++ b/firmware/target/hosted/pcm-alsa.c
+@@ -831,7 +831,11 @@ struct pcm_sink builtin_pcm_sink = {
+     .ops = {
+         .init     = sink_dma_init,
+         .postinit = sink_dma_postinit,
++#if defined(HIBY_LINUX)
++        .set_freq = hiby_builtin_sink_set_freq,
++#else
+         .set_freq = sink_set_freq,
++#endif
+         .lock     = sink_lock,
+         .unlock   = sink_unlock,
+         .play     = sink_dma_start,
+-- 
+2.39.5
+
