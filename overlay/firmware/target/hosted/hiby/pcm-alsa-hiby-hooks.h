@@ -12,11 +12,19 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "pcm-internal.h"
+#include "pcm_sink.h"
 #include "pcm-alsa-hiby.h"
 
 static void open_hwdev(const char *device, snd_pcm_stream_t mode);
-static void pcm_dma_apply_settings_nolock(void);
 static void pcm_pump_locked(snd_pcm_t *handle);
+static void sink_dma_init(void);
+static void sink_dma_postinit(void);
+static void sink_lock(void);
+static void sink_unlock(void);
+static void sink_set_freq_nolock(uint16_t freq);
+static void sink_dma_start(const void *addr, size_t size);
+static void sink_dma_stop(void);
 
 static pthread_t hiby_pcm_poll_thread;
 static volatile bool hiby_pcm_poll_thread_stop = false;
@@ -49,28 +57,74 @@ static bool hiby_pcm_params_ready(void)
     return period_size > 0 && buffer_size > 0 && frames != NULL;
 }
 
-int pcm_alsa_switch_playback_device(const char *device)
+static const char *hiby_pcm_target_device(bool bt_sink)
 {
-    int rc;
+    const char *device = bt_sink ? hiby_pcm_get_bt_device() : NULL;
 
-    if (!device || !*device)
-        return -1;
+    if (device && device[0])
+        return device;
 
-    playback_dev = device;
-    if (!handle)
-        return 0;
-
-    hiby_pcm_mutex_init_once();
-    pthread_mutex_lock(&pcm_mtx);
-    open_hwdev(playback_dev, SND_PCM_STREAM_PLAYBACK);
-    pcm_dma_apply_settings_nolock();
-    rc = (current_alsa_device == playback_dev) ? 0 : -1;
-    pthread_mutex_unlock(&pcm_mtx);
-    return rc;
+    return DEFAULT_PLAYBACK_DEVICE;
 }
+
+static void hiby_sink_set_freq(bool bt_sink, uint16_t freq)
+{
+    const char *device = hiby_pcm_target_device(bt_sink);
+
+    sink_lock();
+    if (!(handle && current_alsa_device == device
+#ifdef HAVE_RECORDING
+          && current_alsa_mode == SND_PCM_STREAM_PLAYBACK
+#endif
+         ))
+    {
+        open_hwdev(device, SND_PCM_STREAM_PLAYBACK);
+    }
+    sink_set_freq_nolock(freq);
+    sink_unlock();
+}
+
+static void hiby_bt_sink_init(void)
+{
+}
+
+static void hiby_bt_sink_postinit(void)
+{
+}
+
+static void hiby_builtin_sink_set_freq(uint16_t freq)
+{
+    hiby_sink_set_freq(false, freq);
+}
+
+static void hiby_bt_sink_set_freq(uint16_t freq)
+{
+    hiby_sink_set_freq(true, freq);
+}
+
+struct pcm_sink hiby_bt_pcm_sink = {
+    .caps = {
+        .samprs       = hw_freq_sampr,
+        .num_samprs   = HW_NUM_FREQ,
+        .default_freq = HW_FREQ_DEFAULT,
+    },
+    .ops = {
+        .init     = hiby_bt_sink_init,
+        .postinit = hiby_bt_sink_postinit,
+        .set_freq = hiby_bt_sink_set_freq,
+        .lock     = sink_lock,
+        .unlock   = sink_unlock,
+        .play     = sink_dma_start,
+        .stop     = sink_dma_stop,
+    },
+};
 
 static bool hiby_pcm_keep_hwdev(const char *device, snd_pcm_stream_t mode)
 {
+#ifndef HAVE_RECORDING
+    (void)mode;
+#endif
+
     if (!(handle && device == current_alsa_device
 #ifdef HAVE_RECORDING
           && current_alsa_mode == mode

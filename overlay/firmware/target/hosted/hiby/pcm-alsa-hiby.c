@@ -7,9 +7,27 @@
 #include "pcm-alsa-hiby.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 
 static char hiby_pcm_bt_mac[18];
+static char hiby_pcm_bt_device[96];
+
+void hiby_pcm_set_bt_device(const char *device)
+{
+    if (!device || !device[0])
+    {
+        hiby_pcm_bt_device[0] = '\0';
+        return;
+    }
+
+    snprintf(hiby_pcm_bt_device, sizeof(hiby_pcm_bt_device), "%s", device);
+}
+
+const char *hiby_pcm_get_bt_device(void)
+{
+    return hiby_pcm_bt_device[0] ? hiby_pcm_bt_device : NULL;
+}
 
 void hiby_pcm_set_bt_mac(const char *mac)
 {
