@@ -37,6 +37,7 @@
 #include "splash.h"
 #include "gui/list.h"
 #include "pcm.h"
+#include "pcm_sink.h"
 #include "pcm-alsa.h"
 
 /* HiBy hosted build provides dynamic output routing helper in its
