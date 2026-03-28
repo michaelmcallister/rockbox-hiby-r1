@@ -57,23 +57,14 @@ static bool hiby_pcm_params_ready(void)
     return period_size > 0 && buffer_size > 0 && frames != NULL;
 }
 
-static const char *hiby_pcm_builtin_device(void)
-{
-    return DEFAULT_PLAYBACK_DEVICE;
-}
-
 static const char *hiby_pcm_target_device(bool bt_sink)
 {
-    const char *device;
+    const char *device = bt_sink ? hiby_pcm_get_bt_device() : NULL;
 
-    if (bt_sink)
-    {
-        device = hiby_pcm_get_bt_device();
-        if (device && device[0])
-            return device;
-    }
+    if (device && device[0])
+        return device;
 
-    return hiby_pcm_builtin_device();
+    return DEFAULT_PLAYBACK_DEVICE;
 }
 
 static void hiby_sink_set_freq(bool bt_sink, uint16_t freq)

@@ -39,11 +39,7 @@
 #include "pcm.h"
 #include "pcm_sink.h"
 #include "pcm-alsa.h"
-
-/* HiBy hosted build provides dynamic output routing helper in its
- * target-specific PCM implementation. */
-void hiby_pcm_set_bt_device(const char *device);
-void hiby_pcm_set_bt_mac(const char *mac);
+#include "pcm-alsa-hiby.h"
 
 #define BT_MAX_DEVICES 32
 #define BT_NAME_LEN 80
