@@ -428,10 +428,19 @@ static void bt_apply_preferred_codec(const char *mac)
     static const char *const codec_tokens[BT_CODEC_COUNT] = {
         NULL, "SBC", "AAC", "aptX", "aptX-HD", "LDAC"
     };
-    /* Best-to-worst order used when the preference is "Auto". */
+    /* Best-to-worst order used when the preference is "Auto".
+     *
+     * NOTE: LDAC is intentionally excluded. On the R1, the BlueALSA LDAC
+     * encoder negotiates a 96 kHz transport that cannot be opened for
+     * playback at all (verified on-device: snd_pcm_open/set_params fails
+     * even when fed LDAC's own native 96 kHz/stereo params, while SBC@48k
+     * and AAC@48k both play). Picking LDAC here yields a connected sink
+     * with no audio and a frozen player. AAC is the best codec that
+     * actually works; SBC is the mandatory fallback. LDAC remains
+     * explicitly selectable from the menu for users whose sink/stack
+     * combination can open it. */
     static const int auto_order[] = {
-        BT_CODEC_LDAC, BT_CODEC_APTX_HD, BT_CODEC_APTX,
-        BT_CODEC_AAC, BT_CODEC_SBC
+        BT_CODEC_APTX_HD, BT_CODEC_APTX, BT_CODEC_AAC, BT_CODEC_SBC
     };
 
     char mac_u[18];
