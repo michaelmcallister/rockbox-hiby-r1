@@ -266,19 +266,24 @@ int pcm_alsa_switch_playback_device(const char *device)
     /* Set the device - actual switch happens on next playback start */
     pcm_alsa_set_playback_device(device);
 
-    /* If currently playing, stop and restart to switch immediately */
-    if (hiby_poll_handle && hiby_poll_mtx)
+    /* If currently playing, stop and restart to switch immediately.
+     * Snapshot the globals first: hiby_pcm_stop_poll_thread() clears both
+     * hiby_poll_handle and hiby_poll_mtx, so using them afterwards would
+     * skip the close (handle leak) and, worse, call
+     * pthread_mutex_unlock(NULL) -> NULL-deref crash on the route switch. */
     {
-        /* Device will be reopened on next pcm_play_dma_start */
-        pthread_mutex_lock(hiby_poll_mtx);
-        hiby_pcm_stop_poll_thread();
-        if (hiby_poll_handle)
+        snd_pcm_t *handle = hiby_poll_handle;
+        pthread_mutex_t *mtx = hiby_poll_mtx;
+
+        if (handle && mtx)
         {
-            snd_pcm_drop(hiby_poll_handle);
-            snd_pcm_close(hiby_poll_handle);
-            hiby_poll_handle = NULL;
+            /* Device will be reopened on next pcm_play_dma_start */
+            pthread_mutex_lock(mtx);
+            hiby_pcm_stop_poll_thread();
+            snd_pcm_drop(handle);
+            snd_pcm_close(handle);
+            pthread_mutex_unlock(mtx);
         }
-        pthread_mutex_unlock(hiby_poll_mtx);
     }
 
     return 0;

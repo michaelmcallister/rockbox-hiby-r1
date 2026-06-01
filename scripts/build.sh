@@ -286,6 +286,9 @@ log "building bootloader"
 cp -f "$FW_BUILD_DIR/rockbox.r1" "$OUT_DIR/"
 cp -f "$FW_BUILD_DIR/rockbox-info.txt" "$OUT_DIR/"
 [ -f "$FW_BUILD_DIR/rockbox.zip" ] && cp -f "$FW_BUILD_DIR/rockbox.zip" "$OUT_DIR/"
+# Keep the unstripped ELF so crash backtraces (rb_backtrace prints raw PCs)
+# can be symbolicated with addr2line. rockbox.r1 itself is stripped.
+[ -f "$FW_BUILD_DIR/rockbox.elf" ] && cp -f "$FW_BUILD_DIR/rockbox.elf" "$OUT_DIR/"
 
 if [ -f "$BL_BUILD_DIR/bootloader.r1" ]; then
   cp -f "$BL_BUILD_DIR/bootloader.r1" "$OUT_DIR/"
