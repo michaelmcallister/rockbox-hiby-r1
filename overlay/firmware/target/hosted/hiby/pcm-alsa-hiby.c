@@ -60,7 +60,28 @@ bool hiby_pcm_is_bluealsa_device(const char *device)
     return device && strstr(device, "bluealsa:") != NULL;
 }
 
+/* Local (built-in DAC) ALSA device, used as the safe fallback when a
+ * Bluetooth sink cannot be opened. Keep in sync with
+ * BT_LOCAL_PLAYBACK_DEVICE in apps/hiby_bluetooth.c. */
+#define HIBY_LOCAL_PLAYBACK_DEVICE "plughw:0,0"
+
 /* ===== Weak Symbol Overrides ===== */
+
+/* Recovery when snd_pcm_open() fails. A Bluetooth sink is hot-pluggable
+ * and can disappear between routing and open (e.g. while bluealsa
+ * re-negotiates a codec), so a failed open must NOT be fatal: fall back
+ * to the local DAC. For the local device itself there is nothing to fall
+ * back to, so return NULL and let the caller panic (genuine hardware
+ * fault). Returning the same device would loop. */
+const char *pcm_alsa_open_fallback(const char *device, int err)
+{
+    (void)err;
+
+    if (hiby_pcm_is_bluealsa_device(device))
+        return HIBY_LOCAL_PLAYBACK_DEVICE;
+
+    return NULL;
+}
 
 /* Adjust buffer sizes for Bluetooth devices */
 void pcm_alsa_adjust_buffering(snd_pcm_sframes_t *period_size_ptr,

@@ -18,4 +18,9 @@ bool hiby_pcm_is_bluealsa_device(const char *device);
 /* Runtime device switching for Bluetooth */
 int pcm_alsa_switch_playback_device(const char *device);
 
+/* Fallback device selection when snd_pcm_open() fails (strong override of
+ * the weak default in pcm-alsa.c). Returns a device to retry, or NULL to
+ * let the caller treat the failure as fatal. */
+const char *pcm_alsa_open_fallback(const char *device, int err);
+
 #endif /* PCM_ALSA_HIBY_H */

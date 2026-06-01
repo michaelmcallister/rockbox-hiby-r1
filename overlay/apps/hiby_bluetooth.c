@@ -28,9 +28,15 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/select.h>
 
 #include "kernel.h"
 #include "audio.h"
@@ -1065,12 +1071,11 @@ static bool bt_get_active_mac(char *mac_out, size_t mac_out_len)
     return false;
 }
 
-static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
+/* Slow path: poll list-pcms on a fixed cadence. Used when the event
+ * monitor cannot be started (fork/exec/pipe failure). */
+static bool bt_wait_for_bluealsa_pcm_poll(const char *mac, int timeout_ticks)
 {
     int ticks = 0;
-
-    if (timeout_ticks < HZ / 2)
-        timeout_ticks = HZ / 2;
 
     while (ticks < timeout_ticks)
     {
@@ -1082,6 +1087,105 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
     }
 
     return false;
+}
+
+/* Wait for the BlueALSA A2DP sink PCM for `mac` to become available.
+ *
+ * `bluealsa-cli monitor` streams PCMAdded/PCMRemoved/PropertyChanged
+ * events on stdout, so instead of polling on a timer we block until the
+ * monitor wakes us, then re-check list-pcms. This collapses the window
+ * after a codec re-negotiation (where the transport briefly disappears
+ * and reappears) without busy-waiting. Falls back to timed polling if
+ * the monitor process cannot be spawned. A wall-clock deadline bounds
+ * the wait regardless of event activity. */
+static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
+{
+    int pipefd[2];
+    pid_t pid;
+    int deadline;
+    int elapsed = 0;
+    bool ready = false;
+
+    if (timeout_ticks < HZ / 2)
+        timeout_ticks = HZ / 2;
+    deadline = timeout_ticks;
+
+    /* Fast path: it may already be up. */
+    if (bt_bluealsa_pcm_ready(mac))
+        return true;
+
+    if (pipe(pipefd) != 0)
+        return bt_wait_for_bluealsa_pcm_poll(mac, deadline);
+
+    pid = fork();
+    if (pid < 0)
+    {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return bt_wait_for_bluealsa_pcm_poll(mac, deadline);
+    }
+
+    if (pid == 0)
+    {
+        /* Child: stream events to the pipe. */
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        execlp("bluealsa-cli", "bluealsa-cli", "monitor", (char *)NULL);
+        _exit(127);
+    }
+
+    /* Parent: wake on each event line (or a 1s tick) and re-check. */
+    close(pipefd[1]);
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+
+    while (elapsed < deadline)
+    {
+        fd_set rfds;
+        struct timeval tv;
+        int rc;
+
+        if (bt_bluealsa_pcm_ready(mac))
+        {
+            ready = true;
+            break;
+        }
+
+        FD_ZERO(&rfds);
+        FD_SET(pipefd[0], &rfds);
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        rc = select(pipefd[0] + 1, &rfds, NULL, NULL, &tv);
+        if (rc > 0)
+        {
+            char buf[256];
+            ssize_t n = read(pipefd[0], buf, sizeof(buf));
+            if (n <= 0 && !(n < 0 && errno == EAGAIN))
+                break; /* monitor exited or pipe error: stop early, poll below */
+            /* drain and loop back to re-check readiness */
+        }
+        else if (rc < 0 && errno != EINTR)
+        {
+            break;
+        }
+
+        elapsed += HZ; /* one ~1s quantum */
+    }
+
+    /* Tear down the monitor child. */
+    close(pipefd[0]);
+    kill(pid, SIGTERM);
+    waitpid(pid, NULL, 0);
+
+    if (ready)
+        return true;
+
+    /* If the monitor died early, finish out the remaining budget polling. */
+    if (elapsed < deadline)
+        return bt_wait_for_bluealsa_pcm_poll(mac, deadline - elapsed);
+
+    return bt_bluealsa_pcm_ready(mac);
 }
 
 static bool bt_prepare_stack(void)
