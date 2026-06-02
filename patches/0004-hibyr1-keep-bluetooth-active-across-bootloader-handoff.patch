@@ -1,29 +1,31 @@
-From 16bb710cb5227c35d170e4ebba0d9a8ed032b103 Mon Sep 17 00:00:00 2001
+From 97db03dbfa75d7b8ecc865a2ca127efa0c949c01 Mon Sep 17 00:00:00 2001
 From: rockbox-hiby-r1-ci <ci@example.invalid>
 Date: Sun, 8 Mar 2026 19:15:00 +0000
-Subject: [PATCH 5/5] hibyr1: keep bluetooth active across handoff; enable
+Subject: [PATCH 5/5] hibyr1: keep bluetooth active across handoff; enable+fix
  bootloader logging
 
-Two bootloader (hibyos_linux.c) changes for the R1:
+Bootloader (hibyos_linux.c) changes for the R1:
 
 1. Drop HIBY_R1 from the bt_suspend-on-boot guard so Bluetooth stays
-   active across the bootloader -> Rockbox handoff (BT IS supported here).
+   active across the bootloader -> Rockbox handoff.
 
-2. Enable ENABLE_LOGGING. The bootloader then redirects its stdout/stderr
-   to BASE_DIR/rockbox.log, and the BOOT_ROCKBOX path execve()s the
-   Rockbox binary WITHOUT closing those fds, so Rockbox inherits them.
-   rb_backtrace prints crash backtraces to stdout, so a segfault is now
-   captured to /data/mnt/sd_0/rockbox.log for post-mortem instead of only
-   flashing on /dev/console. Pairs with shipping the unstripped
-   rockbox.elf for addr2line symbolication.
+2. Enable ENABLE_LOGGING AND move the log-redirect block to after
+   mount_storage(true). open_log() writes to the SD card (BASE_DIR);
+   running it before the card is mounted failed silently, which is why
+   rockbox.log was never created. With it after the mount, the bootloader
+   redirects stdout/stderr to /data/mnt/sd_0/rockbox.log and execve()s
+   Rockbox with those fds inherited, so Rockbox logf()/crash output is
+   captured for post-mortem. Pairs with the shipped unstripped rockbox.elf.
+
+Requires a full r1_rb.upt flash (bootloader is on read-only squashfs).
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ---
- bootloader/hibyos_linux.c | 10 +++++++---
- 1 file changed, 7 insertions(+), 3 deletions(-)
+ bootloader/hibyos_linux.c | 47 +++++++++++++++++++++++----------------
+ 1 file changed, 28 insertions(+), 19 deletions(-)
 
 diff --git a/bootloader/hibyos_linux.c b/bootloader/hibyos_linux.c
-index edda204796..ce43bb1e3f 100644
+index edda204796..ce29b3b170 100644
 --- a/bootloader/hibyos_linux.c
 +++ b/bootloader/hibyos_linux.c
 @@ -47,7 +47,11 @@
@@ -39,7 +41,58 @@ index edda204796..ce43bb1e3f 100644
  //#define AUTO_ENABLE_ADB
  
  /* Basic configuration */
-@@ -694,8 +698,8 @@ int main(int argc, char **argv)
+@@ -634,22 +638,6 @@ int main(int argc, char **argv)
+     adb(1);
+ #endif
+ 
+-    #ifdef ENABLE_LOGGING
+-    /* redirect stdout and stderr to have error messages logged somewhere on the
+-     * user partition */
+-    int fd = open_log();
+-    if(fd >= 0)
+-    {
+-        dup2(fd, fileno(stdout));
+-        dup2(fd, fileno(stderr));
+-        close(fd);
+-    }
+-    /* print version */
+-    printf("Rockbox boot loader\n");
+-    printf("Version: %s\n", rbversion);
+-    printf("%s\n", MODEL_NAME);
+-    #endif
+-
+     system_init();
+     core_allocator_init();
+     kernel_init();
+@@ -666,6 +654,27 @@ int main(int argc, char **argv)
+ 
+     mount_storage(true);
+ 
++    #ifdef ENABLE_LOGGING
++    /* redirect stdout and stderr to have error messages logged somewhere on
++     * the user partition. Must come AFTER mount_storage(): open_log() writes
++     * to the SD card (BASE_DIR), so the open fails silently if the card is
++     * not mounted yet (this is why rockbox.log was never created). The
++     * Rockbox binary is exec'd later with these fds still open, so it
++     * inherits the redirect and its logf()/crash output lands in
++     * rockbox.log. */
++    int fd = open_log();
++    if(fd >= 0)
++    {
++        dup2(fd, fileno(stdout));
++        dup2(fd, fileno(stderr));
++        close(fd);
++    }
++    /* print version */
++    printf("Rockbox boot loader\n");
++    printf("Version: %s\n", rbversion);
++    printf("%s\n", MODEL_NAME);
++    #endif
++
+     /* run all tools menu */
+     while(true)
+     {
+@@ -694,8 +703,8 @@ int main(int argc, char **argv)
          }
          else if(mode == BOOT_ROCKBOX)
          {
