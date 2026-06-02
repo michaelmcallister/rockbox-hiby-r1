@@ -7,6 +7,7 @@
 #include "pcm-alsa-hiby.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -262,6 +263,10 @@ int pcm_alsa_switch_playback_device(const char *device)
 {
     if (!device || !*device)
         return -1;
+
+    fprintf(stderr, "RBTRACE: switch_playback_device -> '%s' (poll_handle=%p)\n",
+            device, (void *)hiby_poll_handle);
+    fflush(stderr);
 
     /* Set the device - actual switch happens on next playback start */
     pcm_alsa_set_playback_device(device);

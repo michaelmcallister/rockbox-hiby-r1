@@ -1,4 +1,4 @@
-From c0d8efa8215f6eb094599da60245d08552ab8973 Mon Sep 17 00:00:00 2001
+From 60f6aeff8bd10d08cf9ea704d533d9a22435cb45 Mon Sep 17 00:00:00 2001
 From: test <test@example.invalid>
 Date: Sun, 31 May 2026 20:24:50 +0100
 Subject: [PATCH 3/5] hibyr1: add platform PCM hooks and HiBy weak overrides
@@ -29,8 +29,8 @@ mutex and delegates. Without this definition the HiBy build failed to
 link (undefined reference to pcm_alsa_pump_locked).
 ---
  firmware/SOURCES                  |   3 +
- firmware/target/hosted/pcm-alsa.c | 223 +++++++++++++++++++++++++++---
- 2 files changed, 204 insertions(+), 22 deletions(-)
+ firmware/target/hosted/pcm-alsa.c | 228 +++++++++++++++++++++++++++---
+ 2 files changed, 209 insertions(+), 22 deletions(-)
 
 diff --git a/firmware/SOURCES b/firmware/SOURCES
 index 20158f8489..262369dc0b 100644
@@ -47,7 +47,7 @@ index 20158f8489..262369dc0b 100644
  #endif
  
 diff --git a/firmware/target/hosted/pcm-alsa.c b/firmware/target/hosted/pcm-alsa.c
-index 7e4833fdfe..65c9ea2149 100644
+index 7e4833fdfe..da017a397e 100644
 --- a/firmware/target/hosted/pcm-alsa.c
 +++ b/firmware/target/hosted/pcm-alsa.c
 @@ -57,6 +57,17 @@
@@ -68,7 +68,7 @@ index 7e4833fdfe..65c9ea2149 100644
  
  /* plughw:0,0 works with both, however "default" is recommended.
   * default doesnt seem to work with async callback but doesn't break
-@@ -111,6 +122,87 @@ static snd_pcm_stream_t current_alsa_mode;  /* SND_PCM_STREAM_PLAYBACK / _CAPTUR
+@@ -111,8 +122,92 @@ static snd_pcm_stream_t current_alsa_mode;  /* SND_PCM_STREAM_PLAYBACK / _CAPTUR
  
  static const char *current_alsa_device;
  
@@ -155,8 +155,13 @@ index 7e4833fdfe..65c9ea2149 100644
 +
  void pcm_alsa_set_playback_device(const char *device)
  {
++    RBTRACE("set_playback_device: '%s' (was '%s')",
++            device ? device : "(null)",
++            playback_dev ? playback_dev : "(null)");
      playback_dev = device;
-@@ -148,6 +240,8 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
+ }
+ 
+@@ -148,6 +243,8 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
          period_size = MIX_FRAME_SAMPLES;
      }
  
@@ -165,7 +170,7 @@ index 7e4833fdfe..65c9ea2149 100644
      /* choose all parameters */
      err = snd_pcm_hw_params_any(handle, params);
      if (err < 0)
-@@ -241,7 +335,8 @@ static int set_swparams(snd_pcm_t *handle)
+@@ -241,7 +338,8 @@ static int set_swparams(snd_pcm_t *handle)
          goto error;
      }
      /* start the transfer when the buffer is half full */
@@ -175,7 +180,7 @@ index 7e4833fdfe..65c9ea2149 100644
      if (err < 0)
      {
          logf("Unable to set start threshold mode for playback: %s", snd_strerror(err));
-@@ -381,20 +476,28 @@ static bool copy_frames(bool first)
+@@ -381,20 +479,28 @@ static bool copy_frames(bool first)
      return true;
  }
  
@@ -213,7 +218,7 @@ index 7e4833fdfe..65c9ea2149 100644
  
      if (state == SND_PCM_STATE_XRUN)
      {
-@@ -403,19 +506,29 @@ static void async_callback(snd_async_handler_t *ahandler)
+@@ -403,19 +509,29 @@ static void async_callback(snd_async_handler_t *ahandler)
          err = snd_pcm_recover(handle, -EPIPE, 0);
          if (err < 0) {
              logf("XRUN Recovery error: %s", snd_strerror(err));
@@ -246,7 +251,7 @@ index 7e4833fdfe..65c9ea2149 100644
  #ifdef HAVE_RECORDING
      if (current_alsa_mode == SND_PCM_STREAM_PLAYBACK)
      {
-@@ -433,7 +546,7 @@ static void async_callback(snd_async_handler_t *ahandler)
+@@ -433,7 +549,7 @@ static void async_callback(snd_async_handler_t *ahandler)
                      err = snd_pcm_recover(handle, -EPIPE, 0);
                      if (err < 0) {
                         logf("XRUN Recovery error: %s", snd_strerror(err));
@@ -255,7 +260,7 @@ index 7e4833fdfe..65c9ea2149 100644
                      }
                      goto retry;
                  }
-@@ -463,7 +576,7 @@ static void async_callback(snd_async_handler_t *ahandler)
+@@ -463,7 +579,7 @@ static void async_callback(snd_async_handler_t *ahandler)
                  err = snd_pcm_recover(handle, -EPIPE, 0);
                  if (err < 0) {
                     logf("XRUN Recovery error: %s", snd_strerror(err));
@@ -264,7 +269,7 @@ index 7e4833fdfe..65c9ea2149 100644
                  }
  		continue;  /* buffer contents trashed, no sense in trying to copy */
              }
-@@ -492,8 +605,24 @@ static void async_callback(snd_async_handler_t *ahandler)
+@@ -492,8 +608,24 @@ static void async_callback(snd_async_handler_t *ahandler)
              /* Depending on the error we might be SOL */
          }
      }
@@ -290,7 +295,7 @@ index 7e4833fdfe..65c9ea2149 100644
      pthread_mutex_unlock(&pcm_mtx);
  }
  
-@@ -502,6 +631,7 @@ static void close_hwdev(void)
+@@ -502,6 +634,7 @@ static void close_hwdev(void)
      logf("closedev (%p)", handle);
  
      if (handle) {
@@ -298,7 +303,7 @@ index 7e4833fdfe..65c9ea2149 100644
          snd_pcm_drain(handle);
  #ifdef AUDIOHW_MUTE_ON_STOP
          audiohw_mute(true);
-@@ -534,11 +664,13 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
+@@ -534,11 +667,13 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
  
      logf("opendev %s (%p)", device, handle);
  
@@ -315,7 +320,7 @@ index 7e4833fdfe..65c9ea2149 100644
      {
          return;
      }
-@@ -546,9 +678,32 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
+@@ -546,9 +681,32 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
      /* Close old handle */
      close_hwdev();
  
@@ -350,7 +355,7 @@ index 7e4833fdfe..65c9ea2149 100644
      }
      last_sample_rate = 0;
  
-@@ -593,6 +748,15 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
+@@ -593,12 +751,23 @@ static void open_hwdev(const char *device, snd_pcm_stream_t mode)
  #endif
      current_alsa_device = device;
  
@@ -366,7 +371,15 @@ index 7e4833fdfe..65c9ea2149 100644
      atexit(alsadev_cleanup);
  }
  
-@@ -666,6 +830,9 @@ static void sink_dma_stop(void)
+ static void sink_dma_init(void)
+ {
+     logf("PCM DMA Init");
++    RBTRACE("sink_dma_init: playback_dev='%s'",
++            playback_dev ? playback_dev : "(null)");
+ 
+     audiohw_preinit();
+ 
+@@ -666,6 +835,9 @@ static void sink_dma_stop(void)
  static void sink_dma_start(const void *addr, size_t size)
  {
      logf("PCM DMA start (%p %d)", addr, size);
@@ -376,7 +389,7 @@ index 7e4833fdfe..65c9ea2149 100644
  
      pcm_data = addr;
      pcm_size = size;
-@@ -678,6 +845,8 @@ static void sink_dma_start(const void *addr, size_t size)
+@@ -678,6 +850,8 @@ static void sink_dma_start(const void *addr, size_t size)
      {
          snd_pcm_state_t state = snd_pcm_state(handle);
          logf("PCM State %d", state);
@@ -385,7 +398,7 @@ index 7e4833fdfe..65c9ea2149 100644
  
          switch (state)
          {
-@@ -696,7 +865,9 @@ static void sink_dma_start(const void *addr, size_t size)
+@@ -696,7 +870,9 @@ static void sink_dma_start(const void *addr, size_t size)
              }
              case SND_PCM_STATE_SETUP:
              {
@@ -395,7 +408,7 @@ index 7e4833fdfe..65c9ea2149 100644
                  if (err < 0)
                      logf("Prepare error: %s", snd_strerror(err));
              }
-@@ -720,11 +891,16 @@ static void sink_dma_start(const void *addr, size_t size)
+@@ -720,11 +896,16 @@ static void sink_dma_start(const void *addr, size_t size)
                  }
  #else
                  /* Fill buffer with proper sample data */
@@ -413,7 +426,7 @@ index 7e4833fdfe..65c9ea2149 100644
                          if (err < 0 && err != period_size && err != -EAGAIN)
                          {
                              logf("Write error: written %i expected %li", err, period_size);
-@@ -732,8 +908,11 @@ static void sink_dma_start(const void *addr, size_t size)
+@@ -732,8 +913,11 @@ static void sink_dma_start(const void *addr, size_t size)
                          }
                      }
                  }
