@@ -1,4 +1,4 @@
-From 0a1a3966601fefc1d000bc36023934bb5946d2ab Mon Sep 17 00:00:00 2001
+From 0cfeb252589dc26a153ca83509192c97c96e1feb Mon Sep 17 00:00:00 2001
 From: test <test@example.invalid>
 Date: Sun, 31 May 2026 20:24:50 +0100
 Subject: [PATCH 3/5] hibyr1: add platform PCM hooks and HiBy weak overrides
@@ -29,8 +29,8 @@ mutex and delegates. Without this definition the HiBy build failed to
 link (undefined reference to pcm_alsa_pump_locked).
 ---
  firmware/SOURCES                  |   3 +
- firmware/target/hosted/pcm-alsa.c | 254 +++++++++++++++++++++++++++---
- 2 files changed, 235 insertions(+), 22 deletions(-)
+ firmware/target/hosted/pcm-alsa.c | 293 +++++++++++++++++++++++++++---
+ 2 files changed, 274 insertions(+), 22 deletions(-)
 
 diff --git a/firmware/SOURCES b/firmware/SOURCES
 index 20158f8489..262369dc0b 100644
@@ -47,7 +47,7 @@ index 20158f8489..262369dc0b 100644
  #endif
  
 diff --git a/firmware/target/hosted/pcm-alsa.c b/firmware/target/hosted/pcm-alsa.c
-index 7e4833fdfe..f6d536c793 100644
+index 7e4833fdfe..d68c00ef15 100644
 --- a/firmware/target/hosted/pcm-alsa.c
 +++ b/firmware/target/hosted/pcm-alsa.c
 @@ -57,6 +57,17 @@
@@ -218,7 +218,7 @@ index 7e4833fdfe..f6d536c793 100644
  
      if (state == SND_PCM_STATE_XRUN)
      {
-@@ -403,18 +509,28 @@ static void async_callback(snd_async_handler_t *ahandler)
+@@ -403,19 +509,29 @@ static void async_callback(snd_async_handler_t *ahandler)
          err = snd_pcm_recover(handle, -EPIPE, 0);
          if (err < 0) {
              logf("XRUN Recovery error: %s", snd_strerror(err));
@@ -236,20 +236,21 @@ index 7e4833fdfe..f6d536c793 100644
      {
 -        goto abort;
 +        return;
-     }
++    }
 +    else if (state == SND_PCM_STATE_DISCONNECTED)
 +    {
 +        /* Hot-pluggable sink (e.g. Bluetooth) went away mid-stream. Do
 +         * not touch the dead handle; the route layer will switch us back
 +         * to local output. */
 +        return;
-+    }
-+
+     }
+ 
 +    if (state == SND_PCM_STATE_OPEN || !pcm_alsa_params_ready(period_size, buffer_size, frames))
 +        return;
- 
++
  #ifdef HAVE_RECORDING
      if (current_alsa_mode == SND_PCM_STREAM_PLAYBACK)
+     {
 @@ -430,21 +546,25 @@ static void async_callback(snd_async_handler_t *ahandler)
                  {
                      logf("mid underrun!");
@@ -481,6 +482,52 @@ index 7e4833fdfe..f6d536c793 100644
                  if (err < 0) {
                      logf("start error: %s", snd_strerror(err));
                      /* We will recover on the next iteration */
+@@ -751,6 +961,45 @@ static void sink_dma_start(const void *addr, size_t size)
+     }
+ }
+ 
++/* Reopen the (new) playback device and resume pumping mid-stream after a
++ * route change. The audio engine does not re-issue its .play call when we
++ * switch devices under it, so closing the old handle would otherwise leave
++ * playback dead (handle NULL, pump stopped). Called from the HiBy route
++ * switch. Safe to call when not playing (it just (re)opens the device). */
++void pcm_alsa_restart_playback(void)
++{
++    const void *addr;
++    size_t size;
++
++    RBTRACE("restart_playback: dev='%s' handle=%p",
++            playback_dev ? playback_dev : "(null)", (void *)handle);
++
++    /* Open the new device (open_hwdev closes any stale handle first and
++     * starts the platform pump thread). */
++    open_hwdev(playback_dev, SND_PCM_STREAM_PLAYBACK);
++    if (!handle)
++    {
++        RBTRACE("restart_playback: open failed");
++        return;
++    }
++
++    /* Re-prime: pull the current playback buffer from the engine and run
++     * the normal start path (fill + snd_pcm_start) on the new device. If
++     * nothing is playing, the callback returns false and we just leave the
++     * device open for the next start. */
++    addr = NULL;
++    size = 0;
++    if (pcm_play_dma_complete_callback(PCM_DMAST_OK, &addr, &size) && addr && size)
++    {
++        RBTRACE("restart_playback: priming with %zu bytes", size);
++        sink_dma_start(addr, size);
++    }
++    else
++    {
++        RBTRACE("restart_playback: no active playback to resume");
++    }
++}
++
+ static void sink_dma_postinit(void)
+ {
+     audiohw_postinit();
 -- 
 2.50.1 (Apple Git-155)
 
