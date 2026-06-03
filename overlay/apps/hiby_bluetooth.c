@@ -101,8 +101,11 @@ struct bt_device_menu_data
 
 static char bt_selected_mac[18];
 static const char *bt_playback_dev = BT_LOCAL_PLAYBACK_DEVICE;
-static char bt_bt_playback_dev[2][96];
-static unsigned int bt_bt_playback_dev_next = 0;
+/* Single stable buffer for the bluealsa device string. (Was a 2-slot
+ * rotating buffer, which gave the same logical device a different pointer
+ * between calls and confused pointer-based device comparisons downstream.
+ * We only ever route one device at a time, so one buffer is correct.) */
+static char bt_bt_playback_dev[96];
 static int bt_codec_pref = BT_CODEC_AUTO;
 static bool bt_codec_pref_loaded = false;
 
@@ -115,12 +118,9 @@ static void bt_connect_device(const struct bt_device *device);
 
 static const char *bt_make_bt_playback_dev(const char *mac)
 {
-    char *route = bt_bt_playback_dev[bt_bt_playback_dev_next];
-
-    bt_bt_playback_dev_next ^= 1;
-    snprintf(route, sizeof(bt_bt_playback_dev[0]),
+    snprintf(bt_bt_playback_dev, sizeof(bt_bt_playback_dev),
              "bluealsa:DEV=%s,PROFILE=a2dp", mac);
-    return route;
+    return bt_bt_playback_dev;
 }
 
 static int bt_simplelist_ok_cancel(int action, struct gui_synclist *lists)

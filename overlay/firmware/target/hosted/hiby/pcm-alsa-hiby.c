@@ -156,7 +156,10 @@ bool pcm_alsa_keep_device(const char *device, snd_pcm_stream_t mode,
     if (!device || !*device)
         panicf("pcm_alsa_keep_device: Invalid empty ALSA device");
 
-    if (!(handle && device == current_device
+    /* Compare by string, not pointer: the BT route device string lives in a
+     * rotating buffer, so the same logical device can have a different
+     * pointer between calls. A pointer compare would wrongly keep/repoen. */
+    if (!(handle && current_device && strcmp(device, current_device) == 0
 #ifdef HAVE_RECORDING
           && current_mode == mode
 #endif
