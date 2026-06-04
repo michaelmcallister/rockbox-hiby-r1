@@ -39,7 +39,6 @@
 #include <sys/select.h>
 
 #include "kernel.h"
-#include "thread.h"
 #include "audio.h"
 #include "metadata.h"   /* full struct mp3entry (elapsed/offset) for route restart */
 #include "menu.h"
@@ -1389,54 +1388,6 @@ int hiby_bluetooth_menu(void)
         }
     }
     return 0;
-}
-
-/* Background thread that reconnects to the last device recorded at boot. Runs
- * on a Rockbox thread (not a raw pthread) because the connect path uses
- * sleep()/audio_*()/splash(), which are Rockbox-thread APIs. Stays silent: at
- * boot the WPS/menu owns the screen, and a failed reconnect (headphones off /
- * out of range) should not nag the user. */
-static long bt_autoconnect_stack[(DEFAULT_STACK_SIZE + 0x2000) / sizeof(long)];
-static const char bt_autoconnect_thread_name[] = "bt autoconnect";
-
-static void bt_autoconnect_thread(void)
-{
-    struct bt_device device;
-
-    if (!bt_load_last_device(&device))
-        return;
-
-    /* Let the platform BT init settle. S80_bt_init runs bt_init in parallel
-     * with the player launch, so /tmp/bt_init_ok may not exist yet at the
-     * moment Rockbox reaches root_menu(). bt_prepare_stack also waits, but a
-     * short head start avoids a needless bt_enable churn. */
-    sleep(HZ * 2);
-
-    if (!bt_prepare_stack())
-        return;
-
-    bt_set_selected_mac(device.mac);
-
-    if (bt_connect_via_bluetoothctl(device.mac))
-        bt_route_to_bluetooth(device.mac);
-}
-
-/* Kick off an auto-reconnect at startup if a device was previously connected.
- * Returns immediately; the work happens on a background thread so boot is
- * never blocked. No-op (and no thread spawned) when nothing is recorded. */
-void hiby_bluetooth_autoconnect(void)
-{
-    char path[160];
-    struct stat st;
-
-    snprintf(path, sizeof(path), "%s/bt_lastused.txt", bt_state_dir());
-    if (stat(path, &st) != 0)
-        return;
-
-    create_thread(bt_autoconnect_thread, bt_autoconnect_stack,
-                  sizeof(bt_autoconnect_stack), 0, bt_autoconnect_thread_name
-                  IF_PRIO(, PRIORITY_BACKGROUND)
-                  IF_COP(, CPU));
 }
 
 #endif /* HIBY_LINUX */
