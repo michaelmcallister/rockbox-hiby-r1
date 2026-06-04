@@ -1,0 +1,43 @@
+From 69f0e9b9249128628247a8455445db0304eadebb Mon Sep 17 00:00:00 2001
+From: Codex <codex@example.invalid>
+Date: Thu, 4 Jun 2026 22:37:13 +0100
+Subject: [PATCH] hibyr1: auto-reconnect last Bluetooth device on boot
+
+Call hiby_bluetooth_autoconnect() right before root_menu() so the player
+reconnects to the last-used headphones at startup without a menu trip.
+The call spawns a background Rockbox thread and returns immediately, so
+boot is never blocked; it is a no-op when no device has been connected.
+---
+ apps/main.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/apps/main.c b/apps/main.c
+index 510bcdfc34..b5f880ecf6 100644
+--- a/apps/main.c
++++ b/apps/main.c
+@@ -153,6 +153,10 @@
+ #endif
+ #endif /* SDL */
+ 
++#ifdef HIBY_LINUX
++#include "hiby_bluetooth.h"
++#endif
++
+ // #define AUTOROCK /* define this to check for "autostart.rock" on boot */
+ /* Alternatively, you can define autostart plugin path and its argument: */
+ // #define AUTOROCK     VIEWERS_DATA_DIR"/imageviewer.rock"
+@@ -244,6 +248,11 @@ int main(void)
+     validate_start_directory_init();
+     /* no calls INIT_ATTR functions after this point anymore!
+      * see definition of INIT_ATTR in config.h */
++#ifdef HIBY_LINUX
++    /* Reconnect to the last Bluetooth device, if any. Non-blocking: the work
++     * runs on a background thread so it never delays reaching the UI. */
++    hiby_bluetooth_autoconnect();
++#endif
+     CHART(">root_menu");
+     root_menu();
+ }
+-- 
+2.50.1 (Apple Git-155)
+
