@@ -270,6 +270,67 @@ static void bt_dbg(const char *fmt, ...)
     fclose(fp);
 }
 
+/* Persist the most recently connected device so the user can reconnect with
+ * one tap (mirrors the stock app's /data/bt_lastused.txt behaviour). Stored as
+ * a single "MAC\tName" line in the resolved state dir. */
+static void bt_save_last_device(const char *mac, const char *name)
+{
+    char path[160];
+    FILE *fp;
+
+    if (!mac || !mac[0])
+        return;
+
+    snprintf(path, sizeof(path), "%s/bt_lastused.txt", bt_state_dir());
+    fp = fopen(path, "w");
+    if (!fp)
+        return;
+
+    fprintf(fp, "%s\t%s\n", mac, (name && name[0]) ? name : "Bluetooth");
+    fclose(fp);
+}
+
+/* Load the last connected device. Returns false if none recorded. The device
+ * is marked paired=true: it connected successfully before, so the connect path
+ * skips the pair step. */
+static bool bt_load_last_device(struct bt_device *out)
+{
+    char path[160];
+    char line[BT_NAME_LEN + 24];
+    char *tab;
+    FILE *fp;
+
+    if (!out)
+        return false;
+
+    snprintf(path, sizeof(path), "%s/bt_lastused.txt", bt_state_dir());
+    fp = fopen(path, "r");
+    if (!fp)
+        return false;
+
+    if (!fgets(line, sizeof(line), fp))
+    {
+        fclose(fp);
+        return false;
+    }
+    fclose(fp);
+
+    line[strcspn(line, "\r\n")] = '\0';
+    tab = strchr(line, '\t');
+    if (tab)
+        *tab = '\0';
+
+    if (!line[0])
+        return false;
+
+    memset(out, 0, sizeof(*out));
+    snprintf(out->mac, sizeof(out->mac), "%s", line);
+    snprintf(out->name, sizeof(out->name), "%s",
+             (tab && tab[1]) ? tab + 1 : "Bluetooth");
+    out->paired = true;
+    return true;
+}
+
 static bool bt_is_codec_word_char(char c)
 {
     return isalnum((unsigned char)c) || c == '-';
@@ -1199,9 +1260,25 @@ static void bt_connect_device(const struct bt_device *device)
     }
 
     if (routed)
+    {
+        bt_save_last_device(mac, device->name);
         splash(HZ, "BT connected");
+    }
     else
         splash(HZ * 2, "BT connected, no audio route");
+}
+
+static void bt_reconnect_last(void)
+{
+    struct bt_device device;
+
+    if (!bt_load_last_device(&device))
+    {
+        splash(HZ * 2, "No last device");
+        return;
+    }
+
+    bt_connect_device(&device);
 }
 
 static void bt_disconnect(void)
@@ -1268,6 +1345,7 @@ int hiby_bluetooth_menu(void)
     static const char *const action_items[] =
     {
         "Status",
+        "Reconnect last",
         "Devices",
         "Disconnect",
     };
@@ -1297,9 +1375,12 @@ int hiby_bluetooth_menu(void)
                 bt_show_status();
                 break;
             case 1:
-                bt_show_devices();
+                bt_reconnect_last();
                 break;
             case 2:
+                bt_show_devices();
+                break;
+            case 3:
                 bt_disconnect();
                 break;
             default:

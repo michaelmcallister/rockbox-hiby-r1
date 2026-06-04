@@ -1,4 +1,6 @@
 work/
 out/
+out*/
 toolchain/
+.claude/
 *.log
