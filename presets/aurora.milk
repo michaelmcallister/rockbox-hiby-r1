@@ -1,0 +1,26 @@
+[preset00]
+fRating=3.0
+fGammaAdj=1.5
+fDecay=0.970
+nWaveMode=0
+bAdditiveWaves=1
+bMaximizeWaveColor=1
+fWaveScale=1.3
+zoom=1.012
+rot=0.000
+cx=0.500
+cy=0.500
+sx=1.000
+sy=1.000
+wave_r=0.500
+wave_g=0.700
+wave_b=0.900
+wave_x=0.500
+wave_y=0.500
+per_frame_1=wave_r = 0.5 + 0.4*sin(time*0.911);
+per_frame_2=wave_g = 0.5 + 0.4*sin(time*1.313 + 1.7);
+per_frame_3=wave_b = 0.5 + 0.4*sin(time*0.717 + 3.1);
+per_frame_4=zoom = 1.008 + 0.025*bass_att;
+per_frame_5=rot = 0.015*sin(time*0.21);
+per_frame_6=cx = 0.5 + 0.12*sin(time*0.183);
+per_frame_7=cy = 0.5 + 0.12*cos(time*0.241);

@@ -44,11 +44,30 @@ hardware, so the simple fixed-interval pump is used.)
   reconfigures the gadget and interrupts audio. Charging while playing is not
   currently supported; unplug and resume playback.
 
+## Milkdrop visualiser
+
+`overlay/apps/plugins/milkdrop.c` is a from-scratch, GPU-less Milkdrop-*style*
+music visualiser plugin that **parses real `.milk` presets**. It ships a small
+NS-EEL expression VM (Milkdrop's `per_frame`/`per_pixel` equation language) plus
+self-contained math (no libm), evaluates `per_pixel` over a warp mesh, and
+drives a fixed-point software feedback renderer: affine + time-animated
+sinusoidal warp, video echo, `nWaveMode` waveforms, and preset crossfades. It
+reads presets from `/.rockbox/milkdrop/` — see [`presets/`](presets/). Registered
+via `patches/0005`.
+
+Building on an Apple-Silicon host: the MIPS cross-toolchain can't build natively
+on macOS (case-insensitive FS + 2012-era autotools that don't know aarch64), so
+use `scripts/docker-build.sh` (ubuntu-22.04 container; `patches/0006` refreshes
+the affected `config.guess`/`config.sub` for arm64 build hosts).
+
 ## Repository layout
 
 - `patches/` — patch series applied on top of upstream Rockbox
-- `overlay/` — new files not present upstream
+- `overlay/` — new files not present upstream (incl. the milkdrop plugin)
+- `presets/` — demo `.milk` presets for the milkdrop plugin
 - `scripts/build.sh` — local reproducible build
+- `scripts/docker-build.sh` — containerised build (for non-Linux hosts)
+- `docker/` — build image matching the CI runner
 - `.github/workflows/` — CI and release automation
 - `baseline/` — provenance for the captured on-device baseline
 
