@@ -1,0 +1,83 @@
+From 02ca5f49619405fdb39a2fb0d4505ecb37a86dd4 Mon Sep 17 00:00:00 2001
+From: rockbox-hiby-r1-ci <ci@example.invalid>
+Date: Thu, 2 Jul 2026 20:56:29 +0100
+Subject: [PATCH] hibyr1: fix USB gadget UDC unbind (empty write is a no-op)
+
+usb_enable(false) wrote "" to the gadget UDC attribute to unbind it, but
+sysfs_set_string("") performs no write syscall at all -- fprintf of an
+empty string flushes zero bytes -- so the UDC never actually unbound.
+Every configfs mutation that followed (function link/unlink, config and
+descriptor writes) then failed EBUSY, so live USB-mode switches silently
+did nothing and only took effect after a reboot. Write "\n" instead; the
+kernel trims the newline and treats it as the empty string, detaching it.
+
+hiby_set_usb_mode now always detaches before mutating the gadget and
+reattaches after (except charge mode), rather than gating on usb_detect(),
+so switching between ADB / mass storage / charge works live.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ firmware/target/hosted/hiby/usb-hiby-gadget.c | 24 ++++++++++++-------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/firmware/target/hosted/hiby/usb-hiby-gadget.c b/firmware/target/hosted/hiby/usb-hiby-gadget.c
+index 8c386b1263..e3a1e05a71 100644
+--- a/firmware/target/hosted/hiby/usb-hiby-gadget.c
++++ b/firmware/target/hosted/hiby/usb-hiby-gadget.c
+@@ -58,8 +58,6 @@ void startup_rbhome(void);
+ #endif
+ 
+ void hiby_set_usb_mode(int mode) {
+-    bool reattach;
+-
+     if (!_usb_init) {
+         usb_init_device();
+     }
+@@ -70,11 +68,12 @@ void hiby_set_usb_mode(int mode) {
+     }
+ 
+     logf(">>>>>>>>>>>>>>>>> hiby_set_usb_mode(%d)\n", mode);
+-    reattach = (_usb_mode != -1 && usb_detect() == USB_INSERTED);
+ 
+-    if (reattach) {
+-        usb_enable(false);
+-    }
++    /* Always detach before mutating the gadget: configfs rejects linking/
++     * unlinking functions on a config while the UDC is bound (EBUSY), which
++     * silently wedged the mode switch (it only took effect after a reboot).
++     * Unbinding when already unbound is harmless. */
++    usb_enable(false);
+ 
+     switch(mode) {
+     case USB_MODE_MASS_STORAGE:
+@@ -95,7 +94,11 @@ void hiby_set_usb_mode(int mode) {
+ 
+     _usb_mode = mode;
+ 
+-    if (reattach && mode != USB_MODE_CHARGE) {
++    if (mode != USB_MODE_CHARGE) {
++        /* Let function daemons (adbd writing its f_fs descriptors) settle
++         * before binding. Binding with no cable present is harmless -- the
++         * UDC waits for VBUS. */
++        usleep(500000);
+         usb_enable(true);
+     }
+ }
+@@ -114,8 +117,13 @@ void usb_enable(bool on)
+     logf(">>>>>>>>>>>>>>>>> usb_enable(%d)\n", on);
+     logf("usb enable %d %d\n", on, _usb_mode);
+ 
++    /* The unbind must be "\n", not "": sysfs_set_string("") performs no write
++     * syscall at all (fprintf of an empty string writes zero bytes), so the
++     * gadget silently stays bound and every following configfs mutation fails
++     * EBUSY. The kernel trims the newline and treats it as the empty string,
++     * which unbinds the UDC. */
+     sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/UDC",
+-                     on ? "13500000.otg_new" : "");
++                     on ? "13500000.otg_new" : "\n");
+ }
+ 
+ /* This is called by usb thread after usb extract in order to return
+-- 
+2.50.1 (Apple Git-155)
+
