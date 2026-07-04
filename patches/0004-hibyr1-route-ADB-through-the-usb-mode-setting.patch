@@ -1,4 +1,4 @@
-From 50b1d5fd96fb58e78e87b6135d1d31672fded4f3 Mon Sep 17 00:00:00 2001
+From 584a3c6066bd86da052e16735c4b2bfa5191ecaf Mon Sep 17 00:00:00 2001
 From: Michael McAllister <me@michaelmcallister.org>
 Date: Thu, 2 Jul 2026 20:57:29 +0100
 Subject: [PATCH 4/5] hibyr1: route ADB through the usb-mode setting
@@ -20,7 +20,7 @@ commit.
  1 file changed, 27 insertions(+), 21 deletions(-)
 
 diff --git a/firmware/target/hosted/hiby/usb-hiby-gadget.c b/firmware/target/hosted/hiby/usb-hiby-gadget.c
-index 210ecaf0bd..1f59f5c79a 100644
+index 651b25bb70..3cca4bfd25 100644
 --- a/firmware/target/hosted/hiby/usb-hiby-gadget.c
 +++ b/firmware/target/hosted/hiby/usb-hiby-gadget.c
 @@ -42,7 +42,6 @@
@@ -82,7 +82,7 @@ index 210ecaf0bd..1f59f5c79a 100644
  }
  
  /* TODO: implement usb detection properly */
-@@ -219,11 +241,7 @@ void enable_mass_storage(void) {
+@@ -217,11 +239,7 @@ void enable_mass_storage(void) {
      system("mkdir -p /sys/kernel/config/usb_gadget/adb_demo/functions/mass_storage.0/lun.0");
      system("mkdir -p /sys/kernel/config/usb_gadget/adb_demo/configs/c.1/strings/0x409");
  
@@ -95,7 +95,7 @@ index 210ecaf0bd..1f59f5c79a 100644
      sysfs_set_int("/sys/kernel/config/usb_gadget/adb_demo/configs/c.1/MaxPower", 120);
  
      system("ln -s /sys/kernel/config/usb_gadget/adb_demo/functions/mass_storage.0 /sys/kernel/config/usb_gadget/adb_demo/configs/c.1/");
-@@ -282,8 +300,6 @@ void usb_init_device(void)
+@@ -280,8 +298,6 @@ void usb_init_device(void)
          return;
      }
  
@@ -104,7 +104,7 @@ index 210ecaf0bd..1f59f5c79a 100644
      /* Before we can do anything here we need to mount configfs */
      int is_mounted = !system("mountpoint -q /sys/kernel/config");
  
-@@ -305,16 +321,6 @@ void usb_init_device(void)
+@@ -303,16 +319,6 @@ void usb_init_device(void)
  
      system("mkdir -p /sys/kernel/config/usb_gadget/adb_demo/configs/c.1/strings/0x409");
  

@@ -1,4 +1,4 @@
-From e2755a0a1c3b0423e670dcd8f8b6d54122b28c73 Mon Sep 17 00:00:00 2001
+From a9e3a8f4dcb50abdf42942a2f9f7137b017956d7 Mon Sep 17 00:00:00 2001
 From: Michael McAllister <me@michaelmcallister.org>
 Date: Thu, 2 Jul 2026 20:56:29 +0100
 Subject: [PATCH 3/5] hibyr1: fix USB gadget UDC unbind (empty write is a
@@ -12,14 +12,14 @@ descriptor writes) then failed EBUSY, so live USB-mode switches silently
 did nothing and only took effect after a reboot. Write "\n" instead; the
 kernel trims the newline and treats it as the empty string, detaching it.
 ---
- firmware/target/hosted/hiby/usb-hiby-gadget.c | 10 ++++------
- 1 file changed, 4 insertions(+), 6 deletions(-)
+ firmware/target/hosted/hiby/usb-hiby-gadget.c | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
 
 diff --git a/firmware/target/hosted/hiby/usb-hiby-gadget.c b/firmware/target/hosted/hiby/usb-hiby-gadget.c
-index 91e178dd03..210ecaf0bd 100644
+index 91e178dd03..651b25bb70 100644
 --- a/firmware/target/hosted/hiby/usb-hiby-gadget.c
 +++ b/firmware/target/hosted/hiby/usb-hiby-gadget.c
-@@ -95,12 +95,10 @@ void usb_enable(bool on)
+@@ -95,12 +95,8 @@ void usb_enable(bool on)
      logf(">>>>>>>>>>>>>>>>> usb_enable(%d)\n", on);
      logf("usb enable %d %d\n", on, _usb_mode);
  
@@ -29,8 +29,6 @@ index 91e178dd03..210ecaf0bd 100644
 -    //if (_usb_mode != USB_MODE_ADB) {
 -        sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/UDC", on ? "13500000.otg_new" : "");
 -    //}
-+    /* Unbind with "\n", not "": an empty string is a no-op write and leaves
-+     * the UDC bound. */
 +    sysfs_set_string("/sys/kernel/config/usb_gadget/adb_demo/UDC",
 +                     on ? "13500000.otg_new" : "\n");
  }
