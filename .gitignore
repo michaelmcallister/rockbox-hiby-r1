@@ -4,3 +4,4 @@ out*/
 toolchain/
 .claude/
 *.log
+.ccache/

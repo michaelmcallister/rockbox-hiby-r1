@@ -1,0 +1,41 @@
+From 16210930df52b5e37fa85555460f62084860bc71 Mon Sep 17 00:00:00 2001
+From: rockbox-hiby-r1-ci <ci@example.invalid>
+Date: Sat, 13 Jun 2026 19:44:27 +0100
+Subject: [PATCH] hibyr1: register milkdrop visualiser plugin
+
+Add the milkdrop Milkdrop-style feedback visualiser (overlay/apps/plugins/
+milkdrop.c) to the plugin build and the demos category.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ apps/plugins/CATEGORIES | 1 +
+ apps/plugins/SOURCES    | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/apps/plugins/CATEGORIES b/apps/plugins/CATEGORIES
+index bf646a5bf9..ef53a82f83 100644
+--- a/apps/plugins/CATEGORIES
++++ b/apps/plugins/CATEGORIES
+@@ -79,6 +79,7 @@ mpegplayer,viewers
+ multiboot_select,apps
+ nim,games
+ open_plugins,viewers
++milkdrop,demos
+ oscilloscope,demos
+ otp,apps
+ pacbox,games
+diff --git a/apps/plugins/SOURCES b/apps/plugins/SOURCES
+index 797601e4dd..6445ab2750 100644
+--- a/apps/plugins/SOURCES
++++ b/apps/plugins/SOURCES
+@@ -151,6 +151,7 @@ demystify.c
+ jewels.c
+ minesweeper.c
+ open_plugins.c
++milkdrop.c
+ oscilloscope.c
+ pegbox.c
+ periodic_table.c
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,9 @@
+# Rockbox simulator build/run environment (host SDL2 app), for tight theme
+# iteration: build the hibyr1 sim, run it headless under Xvfb, drive it with
+# xdotool, and screenshot its framebuffer from /proc/<pid>/mem.
+FROM rockbox-hiby-build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsdl2-dev xvfb xdotool x11-utils x11-apps imagemagick procps gdb \
+    && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,15 @@
+[preset00]
+fDecay=0.970
+nWaveMode=0
+zoom=1.010
+cx=0.500
+cy=0.500
+warp=1.000
+wave_r=0.900
+wave_g=0.600
+wave_b=0.200
+per_frame_1=zoom = 1.008 + 0.02*bass;
+per_frame_2=wave_r = 0.5 + 0.5*sin(time*1.1);
+per_frame_3=wave_g = 0.5 + 0.5*sin(time*1.4);
+per_frame_4=wave_b = 0.5 + 0.5*sin(time*0.8);
+per_pixel_1=rot = rot + 0.12*sin(rad*8 - time*1.5);

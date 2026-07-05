@@ -1,0 +1,46 @@
+From a972cf1514b591bed453fa8fd92ca4d1f9bba6d0 Mon Sep 17 00:00:00 2001
+From: rockbox-hiby-r1-ci <ci@example.invalid>
+Date: Sat, 13 Jun 2026 20:12:25 +0100
+Subject: [PATCH] rockboxdev: refresh alsa-lib config.guess/sub for arm64 build
+ hosts
+
+alsa-lib 1.0.26 ships a 2012 config.guess that does not recognise aarch64,
+so the toolchain build fails with 'cannot guess build type' on Apple Silicon
+(Docker Linux VM is arm64). Refresh config.guess/config.sub from the system
+automake before configuring alsa-lib. No effect on x86_64 CI hosts.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ tools/rockboxdev.sh | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/tools/rockboxdev.sh b/tools/rockboxdev.sh
+index 8b8d4d204a..cf387d6f4e 100755
+--- a/tools/rockboxdev.sh
++++ b/tools/rockboxdev.sh
+@@ -372,6 +372,22 @@ buildtool () {
+             ;;
+     esac
+ 
++    # The bluetooth dependency libs (alsa-lib 1.0.26, expat 2.1.0, ...) bundle a
++    # pre-2013 config.guess/config.sub that does not recognise aarch64 build
++    # hosts, so their configure aborts with "cannot guess build type" on Apple
++    # Silicon / arm64 machines. Refresh any bundled copies from the system
++    # automake. The core toolchain (binutils/gcc/glibc/linux) is left untouched.
++    case "$tool" in
++        binutils|gcc|glibc|linux) ;;
++        *)
++            for _cs in config.guess config.sub; do
++                _src="$(find /usr/share/automake-* -name "$_cs" 2>/dev/null | head -n1)"
++                [ -n "$_src" ] || continue
++                find "$cfg_dir" -name "$_cs" -exec cp -f "$_src" {} \; 2>/dev/null || true
++            done
++            ;;
++    esac
++
+     if [ "$RESTART_STEP" == "gcc-stage1" ] ; then
+ 	CXXFLAGS="-std=gnu++03"
+     elif [ "$RESTART_STEP" == "gcc-stage2" ] ; then
+-- 
+2.50.1 (Apple Git-155)
+
