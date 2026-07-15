@@ -1016,18 +1016,17 @@ static bool bt_get_active_mac(char *mac_out, size_t mac_out_len)
  * monitor cannot be started (fork/exec/pipe failure). */
 static bool bt_wait_for_bluealsa_pcm_poll(const char *mac, int timeout_ticks)
 {
-    int ticks = 0;
+    long deadline = current_tick + timeout_ticks;
 
-    while (ticks < timeout_ticks)
+    while (TIME_BEFORE(current_tick, deadline))
     {
         if (bt_bluealsa_pcm_ready(mac))
             return true;
 
         sleep(HZ / 5);
-        ticks += HZ / 5;
     }
 
-    return false;
+    return bt_bluealsa_pcm_ready(mac);
 }
 
 /* Wait for the BlueALSA A2DP sink PCM for `mac` to become available.
@@ -1043,27 +1042,26 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
 {
     int pipefd[2];
     pid_t pid;
-    int deadline;
-    int elapsed = 0;
+    long deadline;
     bool ready = false;
 
     if (timeout_ticks < HZ / 2)
         timeout_ticks = HZ / 2;
-    deadline = timeout_ticks;
+    deadline = current_tick + timeout_ticks;
 
     /* Fast path: it may already be up. */
     if (bt_bluealsa_pcm_ready(mac))
         return true;
 
     if (pipe(pipefd) != 0)
-        return bt_wait_for_bluealsa_pcm_poll(mac, deadline);
+        return bt_wait_for_bluealsa_pcm_poll(mac, timeout_ticks);
 
     pid = fork();
     if (pid < 0)
     {
         close(pipefd[0]);
         close(pipefd[1]);
-        return bt_wait_for_bluealsa_pcm_poll(mac, deadline);
+        return bt_wait_for_bluealsa_pcm_poll(mac, timeout_ticks);
     }
 
     if (pid == 0)
@@ -1080,7 +1078,7 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
     close(pipefd[1]);
     fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
 
-    while (elapsed < deadline)
+    while (TIME_BEFORE(current_tick, deadline))
     {
         fd_set rfds;
         struct timeval tv;
@@ -1110,8 +1108,6 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
         {
             break;
         }
-
-        elapsed += HZ; /* one ~1s quantum */
     }
 
     /* Tear down the monitor child. */
@@ -1123,8 +1119,8 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
         return true;
 
     /* If the monitor died early, finish out the remaining budget polling. */
-    if (elapsed < deadline)
-        return bt_wait_for_bluealsa_pcm_poll(mac, deadline - elapsed);
+    if (TIME_BEFORE(current_tick, deadline))
+        return bt_wait_for_bluealsa_pcm_poll(mac, deadline - current_tick);
 
     return bt_bluealsa_pcm_ready(mac);
 }
