@@ -1016,18 +1016,17 @@ static bool bt_get_active_mac(char *mac_out, size_t mac_out_len)
  * monitor cannot be started (fork/exec/pipe failure). */
 static bool bt_wait_for_bluealsa_pcm_poll(const char *mac, int timeout_ticks)
 {
-    int ticks = 0;
+    long deadline = current_tick + timeout_ticks;
 
-    while (ticks < timeout_ticks)
+    while (TIME_BEFORE(current_tick, deadline))
     {
         if (bt_bluealsa_pcm_ready(mac))
             return true;
 
         sleep(HZ / 5);
-        ticks += HZ / 5;
     }
 
-    return false;
+    return bt_bluealsa_pcm_ready(mac);
 }
 
 /* Wait for the BlueALSA A2DP sink PCM for `mac` to become available.
@@ -1043,27 +1042,26 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
 {
     int pipefd[2];
     pid_t pid;
-    int deadline;
-    int elapsed = 0;
+    long deadline;
     bool ready = false;
 
     if (timeout_ticks < HZ / 2)
         timeout_ticks = HZ / 2;
-    deadline = timeout_ticks;
+    deadline = current_tick + timeout_ticks;
 
     /* Fast path: it may already be up. */
     if (bt_bluealsa_pcm_ready(mac))
         return true;
 
     if (pipe(pipefd) != 0)
-        return bt_wait_for_bluealsa_pcm_poll(mac, deadline);
+        return bt_wait_for_bluealsa_pcm_poll(mac, timeout_ticks);
 
     pid = fork();
     if (pid < 0)
     {
         close(pipefd[0]);
         close(pipefd[1]);
-        return bt_wait_for_bluealsa_pcm_poll(mac, deadline);
+        return bt_wait_for_bluealsa_pcm_poll(mac, timeout_ticks);
     }
 
     if (pid == 0)
@@ -1080,7 +1078,7 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
     close(pipefd[1]);
     fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
 
-    while (elapsed < deadline)
+    while (TIME_BEFORE(current_tick, deadline))
     {
         fd_set rfds;
         struct timeval tv;
@@ -1110,8 +1108,6 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
         {
             break;
         }
-
-        elapsed += HZ; /* one ~1s quantum */
     }
 
     /* Tear down the monitor child. */
@@ -1123,8 +1119,8 @@ static bool bt_wait_for_bluealsa_pcm(const char *mac, int timeout_ticks)
         return true;
 
     /* If the monitor died early, finish out the remaining budget polling. */
-    if (elapsed < deadline)
-        return bt_wait_for_bluealsa_pcm_poll(mac, deadline - elapsed);
+    if (TIME_BEFORE(current_tick, deadline))
+        return bt_wait_for_bluealsa_pcm_poll(mac, deadline - current_tick);
 
     return bt_bluealsa_pcm_ready(mac);
 }
@@ -1240,21 +1236,58 @@ static bool bt_prepare_stack(void)
  * BlueALSA sink PCM never appears ("connected, no route to audio"). A
  * plain `bluetoothctl connect` does bring A2DP up (it is also what HiBy's
  * own bt_connect_last.sh uses), so use it as the connect mechanism. */
+/* Connect tuning. The hold must outlast the wait, so bluetoothctl is still
+ * alive for the whole window in which the link may come up. */
+#define BT_CONNECT_ATTEMPTS  2
+#define BT_CONNECT_WAIT_SECS 10
+#define BT_CONNECT_HOLD_SECS 12
+
 static bool bt_connect_via_bluetoothctl(const char *mac)
 {
-    char cmd[160];
+    char cmd[224];
+    int attempt;
 
     if (!mac || !*mac)
         return false;
 
-    /* power on + connect; ignore output, we verify via the PCM below */
-    snprintf(cmd, sizeof(cmd),
-             "printf 'power on\\nconnect %s\\nquit\\n' | bluetoothctl "
-             ">/tmp/rb_bt_connect.log 2>&1", mac);
-    system(cmd);
+    for (attempt = 1; attempt <= BT_CONNECT_ATTEMPTS; attempt++)
+    {
+        /* `connect` is asynchronous: bluetoothctl prints "Attempting to
+         * connect" and the outcome arrives later. Feeding `quit` on the next
+         * line therefore tears the session down with the connect still in
+         * flight, which is why a cold device reliably failed the first try
+         * (linked=no) and succeeded on the second. Keep the session alive
+         * while the link comes up, and background it so a successful connect
+         * still returns as soon as the PCM appears rather than waiting out
+         * the sleep. */
+        snprintf(cmd, sizeof(cmd),
+                 "(printf 'power on\\nconnect %s\\n'; sleep %d; printf 'quit\\n') "
+                 "| bluetoothctl >/tmp/rb_bt_connect.log 2>&1 &",
+                 mac, BT_CONNECT_HOLD_SECS);
+        system(cmd);
 
-    /* A2DP transport/PCM acquisition is asynchronous; wait for the sink. */
-    return bt_wait_for_bluealsa_pcm(mac, HZ * 8);
+        /* A2DP transport/PCM acquisition is asynchronous; wait for the sink. */
+        if (bt_wait_for_bluealsa_pcm(mac, HZ * BT_CONNECT_WAIT_SECS))
+            return true;
+
+        /* Failing here means no route is attempted at all, which presents as
+         * "connected (chime, device listed) but silent". Say so: it is
+         * otherwise the one connect outcome that leaves no trace in the log.
+         * linked=no means the ACL link never came up (bluetoothctl's connect
+         * did not take); linked=yes means the link is up but BlueALSA never
+         * registered an A2DP sink -- different faults, do not conflate. */
+        bt_dbg("connect: no a2dpsrc/sink for %s within %ds (try %d/%d, linked=%s)",
+               mac, BT_CONNECT_WAIT_SECS, attempt, BT_CONNECT_ATTEMPTS,
+               bt_is_connected(mac) ? "yes" : "no");
+
+        /* Drop the backgrounded session before retrying so a stale one cannot
+         * quit out from under the next attempt. (`pidof` rather than `pkill`:
+         * it is already proven present on this BusyBox. A no-op if none is
+         * running.) */
+        system("kill $(pidof bluetoothctl) >/dev/null 2>&1");
+    }
+
+    return false;
 }
 
 static void bt_show_devices(void)
