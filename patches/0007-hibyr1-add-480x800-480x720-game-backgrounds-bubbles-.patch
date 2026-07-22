@@ -1,0 +1,94 @@
+From b2d3e449823c0f04b7283ea6b11ffe6406b9e93f Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Wed, 22 Jul 2026 20:24:44 +0100
+Subject: [PATCH] hibyr1: add 480x800/480x720 game backgrounds (bubbles,
+ rockblox, invadrox)
+
+On the R1 (480x800) and R3ProII (480x720), bubbles, rockblox and invadrox had
+no background bitmap for the screen size, so apps/plugins/bitmaps/native/SOURCES
+fell through its ">=" ladders to a smaller/landscape bitmap (bubbles->640x480,
+rockblox->320x240, invadrox->480x640). Each plugin then blits it full-screen
+with lcd_bitmap(bg, 0, 0, LCD_WIDTH, LCD_HEIGHT), reading far past the end of
+the smaller source array -> SIGSEGV.
+
+Select new 480x800/480x720 backgrounds (added as overlay bitmaps) for all three
+so the full-screen blit reads exactly its buffer. Also complete bubbles'
+under-specified 480x(>=640) layout (YOFS + LEVEL_TXT/SCORE_TXT), which the
+default text path otherwise renders on top of itself with the R1's large UI font.
+---
+ apps/plugins/bitmaps/native/SOURCES | 22 +++++++++++++++++++---
+ apps/plugins/bubbles.c              |  9 +++++++++
+ 2 files changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/apps/plugins/bitmaps/native/SOURCES b/apps/plugins/bitmaps/native/SOURCES
+index b2286bcc33..821672a09c 100644
+--- a/apps/plugins/bitmaps/native/SOURCES
++++ b/apps/plugins/bitmaps/native/SOURCES
+@@ -196,8 +196,16 @@ jackpot_slots.30x420x1.bmp
+ 
+ /* Bubbles */
+ #ifdef HAVE_LCD_COLOR
+-#if ((LCD_WIDTH >= 640) && (LCD_HEIGHT >= 480)) || \
+-    ((LCD_WIDTH >= 480) && (LCD_HEIGHT >= 640))
++#if (LCD_WIDTH >= 640) && (LCD_HEIGHT >= 480)
++bubbles_emblem.640x480x16.bmp
++bubbles_background.640x480x16.bmp
++#elif (LCD_WIDTH == 480) && (LCD_HEIGHT >= 800)
++bubbles_emblem.640x480x16.bmp
++bubbles_background.480x800x16.bmp
++#elif (LCD_WIDTH == 480) && (LCD_HEIGHT >= 720)
++bubbles_emblem.640x480x16.bmp
++bubbles_background.480x720x16.bmp
++#elif (LCD_WIDTH >= 480) && (LCD_HEIGHT >= 640)
+ bubbles_emblem.640x480x16.bmp
+ bubbles_background.640x480x16.bmp
+ #elif (LCD_WIDTH >= 360) && (LCD_HEIGHT >= 400)
+@@ -436,7 +444,11 @@ invadrox_shield.22x16x16.bmp
+ invadrox_ufo.16x7x16.bmp
+ invadrox_ufo_explode.21x8x16.bmp
+ invadrox_numbers.50x7x16.bmp
+-#if LCD_WIDTH == 480
++#if LCD_WIDTH == 480 && LCD_HEIGHT >= 800
++invadrox_background.480x800x16.bmp
++#elif LCD_WIDTH == 480 && LCD_HEIGHT >= 720
++invadrox_background.480x720x16.bmp
++#elif LCD_WIDTH == 480
+ invadrox_background.480x640x16.bmp
+ #elif LCD_WIDTH == 360 && LCD_HEIGHT == 400
+ invadrox_background.360x400x16.bmp
+@@ -605,6 +617,10 @@ puzzles_cursor.11x16x24.bmp
+ rockblox_background.640x480x16.bmp
+ #elif   (LCD_WIDTH == 360) && (LCD_HEIGHT == 400)
+ rockblox_background.360x400x16.bmp
++#elif   (LCD_WIDTH == 480) && (LCD_HEIGHT >= 800)
++rockblox_background.480x800x16.bmp
++#elif   (LCD_WIDTH == 480) && (LCD_HEIGHT >= 720)
++rockblox_background.480x720x16.bmp
+ #elif   (LCD_WIDTH >= 320) && (LCD_HEIGHT >= 240)
+ rockblox_background.320x240x16.bmp
+ #elif (LCD_WIDTH == 240) && (LCD_HEIGHT >= 320)
+diff --git a/apps/plugins/bubbles.c b/apps/plugins/bubbles.c
+index a647d98fad..d430f79e71 100644
+--- a/apps/plugins/bubbles.c
++++ b/apps/plugins/bubbles.c
+@@ -136,8 +136,17 @@ enum {
+ 
+ #elif (LCD_WIDTH == 480) && (LCD_HEIGHT >= 640)
+ #define XOFS          128
++#define YOFS          120
+ #define MAX_FPS       40
+ 
++/* custom text positioning (left panel; matches the 480x800/480x720 bg) */
++#define LEVEL_TXT_X     6
++#define LEVEL_TXT_WIDTH 116
++#define LEVEL_TXT_Y     16
++#define SCORE_TXT_X     6
++#define SCORE_TXT_WIDTH 116
++#define SCORE_TXT_Y     104
++
+ #elif (LCD_WIDTH == 360) && (LCD_HEIGHT == 400)
+ #define XOFS            86
+ #define YOFS            100
+-- 
+2.50.1 (Apple Git-155)
+
